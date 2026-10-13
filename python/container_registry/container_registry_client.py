@@ -51,6 +51,15 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def web_opener(context):
+    """http and https only (no file: or ftp:), and no automatic redirects."""
+    opener = urllib.request.OpenerDirector()
+    for handler in (urllib.request.HTTPHandler(), urllib.request.HTTPSHandler(context=context),
+                    urllib.request.HTTPErrorProcessor(), urllib.request.HTTPDefaultErrorHandler(), _NoRedirect()):
+        opener.add_handler(handler)
+    return opener
+
+
 def sha256_hex(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -85,7 +94,8 @@ class RegistryClient:
         context = ssl.create_default_context()  # system store, and SSL_CERT_FILE when set
         if ca_file:
             context.load_verify_locations(cafile=ca_file)
-        self.opener = urllib.request.build_opener(_NoRedirect, urllib.request.HTTPSHandler(context=context))
+        self.opener = web_opener(context)
+        self.scheme = parts.scheme
         self.context = context
         self.auth = {}
 
@@ -143,6 +153,10 @@ class RegistryClient:
         realm = params.get("realm")
         if not realm:
             raise RegistryError(f"{self.host} sent a Bearer challenge without a realm: {challenge}")
+        realm_parts = urllib.parse.urlsplit(realm)
+        if realm_parts.scheme != "https" and not (realm_parts.scheme == "http" and self.scheme == "http"
+                                                  and realm_parts.hostname == urllib.parse.urlsplit(self.base).hostname):
+            raise RegistryError(f"{self.host} names a token realm {realm} that is not https; credentials not sent")
         query = []
         if "service" in params:
             query.append(("service", params["service"]))
@@ -206,7 +220,10 @@ class RegistryClient:
             location = urllib.parse.urljoin(response.url if hasattr(response, "url") else self.base,
                                             response.headers.get("Location", ""))
             response.close()
-            same = urllib.parse.urlsplit(location).netloc == self.host
+            target = urllib.parse.urlsplit(location)
+            if target.scheme not in ("http", "https"):
+                raise RegistryError(f"blob {digest} redirects to {target.scheme}:, refused")
+            same = target.netloc == self.host and target.scheme == self.scheme
             headers = self._with_auth((repository, "pull", None), {}) if same else {}
             response = self._open("GET", location, headers)
         raise RegistryError(f"too many redirects for blob {digest}")
@@ -215,10 +232,11 @@ class RegistryClient:
         out, url, seen = [], f"{self.base}/v2/{first}", set()
         while url and url not in seen and len(seen) < 1000:
             seen.add(url)
-            path = url[len(self.base) + len("/v2/"):] if url.startswith(self.base) else url
+            path = urllib.parse.urlsplit(url)
+            path = path.path.split("/v2/", 1)[1] + (f"?{path.query}" if path.query else "")  # onto Registry URL's base
             response = self._send(repository, "pull", "GET", path)
-            if response.status == 404 and repository is not None:
-                return out
+            if response.status == 404 and repository is not None and not out:
+                return None  # no such repository
             self._expect(response, f"list {what}", 200)
             out += json.loads(response.read()).get(field) or []
             match = re.search(r'<([^>]+)>\s*;\s*rel="?next"?', response.headers.get("Link", ""))
@@ -258,8 +276,12 @@ class RegistryClient:
         """One PUT of a blob read from stream (size bytes)."""
         upload = upload or self.start_upload(repository)
         url = upload + ("&" if "?" in upload else "?") + "digest=" + urllib.parse.quote(digest)
-        headers = self._with_auth((repository, "pull,push", None),
-                                  {"Content-Type": "application/octet-stream", "Content-Length": str(size)})
+        headers = {"Content-Type": "application/octet-stream", "Content-Length": str(size)}
+        target = urllib.parse.urlsplit(upload)
+        if target.scheme not in ("http", "https"):
+            raise RegistryError(f"upload location {upload} refused")
+        if target.netloc == self.host and target.scheme == self.scheme:
+            headers = self._with_auth((repository, "pull,push", None), headers)
         response = self._open("PUT", url, headers, stream if size else b"")
         response.read()
         self._expect(response, f"upload blob {digest} to {repository}", 201, 204)
@@ -319,7 +341,7 @@ def read_export(path):
 
         def read(name):
             member = members.get(name)
-            if member is None:
+            if member is None or not member.isfile():
                 raise RegistryError(f"missing {name}")
             return tar.extractfile(member).read()
 
@@ -435,7 +457,7 @@ def plan_image(client, repository, digest):
 def write_export(client, path, images):
     """Write images [(source repository, tag, digest, target, root, children, blobs)] as an export tar at path
     (through path.partial, renamed once complete). Returns its sha256."""
-    partial = f"{path}.partial"
+    partial = os.path.join(os.path.dirname(path), "." + os.path.basename(path) + ".partial")  # hidden from ListFile
     written, entries = {}, []
     with open(partial, "wb") as raw:
         hashing = _HashingWriter(raw)
@@ -460,8 +482,10 @@ def write_export(client, path, images):
                     info.size, info.mode = size, 0o644
                     response = client.open_blob(repository, blob)
                     stream = _Hashing(response)
-                    tar.addfile(info, stream)
-                    response.close()
+                    try:
+                        tar.addfile(info, stream)
+                    finally:
+                        response.close()
                     if stream.count != size or "sha256:" + stream.digest.hexdigest() != blob:
                         raise RegistryError(f"blob {blob} from {repository} did not match its size or digest")
                     written[blob] = name

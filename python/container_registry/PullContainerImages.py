@@ -10,7 +10,7 @@ from nifiapi.flowfilesource import FlowFileSource, FlowFileSourceResult
 from nifiapi.properties import ExpressionLanguageScope, PropertyDescriptor, StandardValidators
 
 from container_registry_client import (DIGEST, REPOSITORY, TAG, RegistryClient, RegistryError, plan_image,
-                                       rebase, write_export)
+                                       rebase, web_opener, write_export)
 
 LISTING, LEDGER, IMAGE_LIST = "Registry Listing", "Ledger", "Image List"
 INITIALISED = "__initialised"
@@ -124,25 +124,25 @@ class PullContainerImages(FlowFileSource):
             elif entry not in repositories:
                 repositories.append(entry)
         for repository in repositories:
-            for tag in client.tags(repository):
+            for tag in client.tags(repository) or []:  # None: the repository is gone
                 if not tag_filter.fullmatch(tag):
                     continue
                 if not TAG.fullmatch(tag) or not REPOSITORY.fullmatch(repository):
                     self.logger.warn(f"Skipping {repository}:{tag}: not a valid repository and tag")
                     continue
-                digest = client.manifest_digest(repository, tag)
-                if digest:
-                    yield repository, tag, digest
+                # None (deleted since the listing) keeps its state entry and exports nothing
+                yield repository, tag, client.manifest_digest(repository, tag)
 
     def _from_ledger(self, context, client):
         url = self._value(context, self.LEDGER_URL)
+        if not url:
+            raise RegistryError("Image Source Ledger needs a Ledger URL")
         headers = {}
         token = context.getProperty(self.LEDGER_TOKEN).getValue()
         if token:
             headers[context.getProperty(self.LEDGER_TOKEN_HEADER).getValue()] = token
         request = urllib.request.Request(url, headers=headers)
-        opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=client.context))
-        with opener.open(request, timeout=client.timeout) as response:
+        with web_opener(client.context).open(request, timeout=client.timeout) as response:  # the token never follows a redirect
             ledger = json.loads(response.read())
         owner = ledger.get("registry") or ""
         if owner and owner != client.host:
@@ -198,7 +198,7 @@ class PullContainerImages(FlowFileSource):
         # Remember only what the source still lists, so the state does not grow with every tag ever seen.
         state = {k: v for k, v in exported.items() if k in current}
         state[INITIALISED] = "true"
-        wanted = [v for k, v in current.items() if exported.get(k) != v[2]]
+        wanted = [v for k, v in current.items() if v[2] and exported.get(k) != v[2]]
 
         if initial and context.getProperty(self.INITIAL_RUN).getValue() == "Record Only":
             state.update({f"{r}:{t}": d for r, t, d in wanted})
@@ -213,6 +213,8 @@ class PullContainerImages(FlowFileSource):
         limit = self._max_size(context)
         rewrite = self._value(context, self.REWRITE)
         strip = context.getProperty(self.STRIP).getValue() == "true"
+        if strip and rewrite:
+            raise RegistryError("set Rewrite Base Path or Strip Base Path, not both")
         batch, planned, total = [], {}, 0
         for repository, tag, digest in wanted:
             key = f"{repository}@{digest}"
@@ -223,11 +225,16 @@ class PullContainerImages(FlowFileSource):
                     # Garbage-collected, or the sync is mid-run: this image waits for the next run.
                     self.logger.warn(f"Skipping {repository}:{tag}@{digest} this run: {error}")
                     continue
+            try:
+                target = rebase(repository, rewrite, strip)
+            except RegistryError as error:
+                self.logger.warn(f"Skipping {repository}:{tag}: {error}")
+                continue
             root, children, blobs = planned[key]
             size = sum(blobs.values())
             if limit and batch and total + size > limit:
                 continue  # the next run takes it, since the state does not record it
-            batch.append((repository, tag, digest, rebase(repository, rewrite, strip), root, children, blobs))
+            batch.append((repository, tag, digest, target, root, children, blobs))
             total += size
         if not batch:
             state_manager.setState(state, Scope.CLUSTER)
@@ -256,7 +263,7 @@ class PullContainerImages(FlowFileSource):
             state.update({f"{r}:{t}": d for r, t, d, *_ in batch})
             state_manager.setState(state, Scope.CLUSTER)
         except Exception:
-            for leftover in (path, path + ".partial"):
+            for leftover in (path, os.path.join(directory, "." + name + ".partial")):
                 if os.path.exists(leftover):
                     os.remove(leftover)
             raise

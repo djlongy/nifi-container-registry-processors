@@ -67,6 +67,8 @@ class PushContainerImages(FlowFileTransform):
                                     context.getProperty(self.PASSWORD).getValue(),
                                     self._value(context, self.CA_FILE, flowfile),
                                     int(context.getProperty(self.TIMEOUT).getValue()))
+            if self._value(context, self.REWRITE, flowfile) and context.getProperty(self.STRIP).getValue() == "true":
+                raise ValueError("set Rewrite Base Path or Strip Base Path, not both")
             if not path:
                 handle, temporary = tempfile.mkstemp(suffix=".tar")
                 with os.fdopen(handle, "wb") as out:
