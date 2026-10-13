@@ -1,6 +1,6 @@
 # container_registry
 
-PushContainerImages and PullContainerImages as NiFi Python processors: same tar, same attributes as the NAR, plain source.
+PushContainerImages, PullContainerImages and ExportContainerImages as NiFi Python processors: same tar, same attributes as the NAR, plain source.
 
 ## Requirements
 
@@ -28,17 +28,17 @@ initContainers:
         mountPath: /target
 ```
 
-NiFi discovers both processors within a minute, listed as `PullContainerImages 1.4.0` and `PushContainerImages 1.4.0` (bundle `python-extensions`). An edited file reloads when the processor next starts.
+NiFi discovers the processors within a minute, listed as `PullContainerImages 2.0.0`, `PushContainerImages 2.0.0` and `ExportContainerImages 2.0.0` (bundle `python-extensions`). An edited file reloads when the processor next starts.
 
 ## Properties
 
-The full set, with descriptions, is in `PullContainerImages.py` and `PushContainerImages.py` and on each processor's Usage page.
+The full set, with descriptions, is in `PullContainerImages.py`, `PushContainerImages.py` and `ExportContainerImages.py` and on each processor's Usage page.
 
 | Req | Name | Default | Purpose |
 |---|---|---|---|
 | Required | Registry URL | none | `https://host`, `http://host:5000`, or Artifactory's `https://host/artifactory/api/docker/<repo-key>` |
 | Optional | Username, Password | none | Empty for an open registry |
-| Optional | CA Certificate File | none | Extra PEM CAs. The system store and `SSL_CERT_FILE` are always trusted |
+| Optional | SSL Context Service | none | An SSLContextProvider whose truststore CAs are trusted in addition. The system store and `SSL_CERT_FILE` are always trusted |
 | Optional | Trusted Storage Hosts | none | Hosts, addresses or CIDR ranges (`minio.internal, 10.20.0.0/16`) the registry may redirect blobs to although they are private. Loopback, link-local, private and plain-http-from-https targets are refused otherwise |
 | Optional | Rewrite Base Path, Strip Base Path | none, `false` | Replace or remove the first path segment of every repository |
 | Pull | Image Source | `Registry Listing` | `Registry Listing` (**Repositories**, `team/*`, `*`), `Ledger` (**Ledger URL**), or `Image List` (**Image List**, one image per line) |
@@ -46,6 +46,8 @@ The full set, with descriptions, is in `PullContainerImages.py` and `PushContain
 | Pull | Initial Run | `Export All` | `Record Only` baselines the state and exports only later changes |
 | Pull | Max Export Size | no limit | Blob bytes per tar. What does not fit goes on the next run |
 | Pull | *(dynamic)* | none | Becomes an attribute on each FlowFile, Expression Language over its attributes |
+| Export | Repositories | none (required) | Allowlist, comma or new line separated. An entry ending in `*` is a prefix (`team/*`); any other repository in the webhook fails it |
+| Export | Output Directory, Filename Prefix, Artifact Type, Max Export Size, Request Timeout | as Pull | The tar is written there. Over Max Export Size fails the whole webhook, nothing is split |
 | Push | Tar File | FlowFile content | Path of the tar on disk, such as `/data/in/${filename}`. Content is read into memory, so set this for any real tar |
 | Push | Delete Tar File | `false` | Remove Tar File once every image is pushed |
 | Push | Move Existing Tags | `false` | A tag at another digest fails the tar, and nothing is pushed, unless `true` |
@@ -69,6 +71,17 @@ RouteOnAttribute ${X-Artifact-Type:equals('container-images')}
      success -> done   failure -> a stopped processor, to inspect registry.error   original -> auto-terminate
 ```
 
+Low side, driven by the gitlab-registry-mirror webhook (`MIRROR_WEBHOOK_URL`) instead of a schedule:
+
+```text
+ListenHTTP
+  -> RouteOnAttribute ${X-Artifact-Type:equals('container-images-request')}
+  -> ExportContainerImages (Registry URL, Repositories team/*, Output Directory /data/out)
+  -> PushContainerImages (Tar File /data/out/${filename}, Delete Tar File true)   failure -> a stopped processor
+```
+
+The body only selects images. ExportContainerImages fails the FlowFile to `failure`, with `registry.error`, and exports nothing when: `X-Sha256` is missing or is not the sha256 of the body; the body is not JSON `{"registry", "images": [{"repository", "tag", "digest"}]}`; `registry` is not the host of Registry URL (`:443` is ignored); a repository is not in Repositories; a repository, tag or digest is malformed; or the digest the registry resolves for `repository:tag` now differs from the body's. Otherwise all images go into one tar, and `success` carries the same attributes as Pull's (empty content). To send it across a diode, put FetchFile after it as for Pull. Content-based integrity only: add a token on ListenHTTP if the sender must be authenticated.
+
 A FlowFile out of Push still holds the tar. Auto-terminate `success`, or give its queue a back-pressure size above the largest tar; a full queue stops Push.
 
 ## Behaviour
@@ -90,12 +103,16 @@ A FlowFile out of Push still holds the tar. Auto-terminate `success`, or give it
 
 ## Environment variables
 
-Registry URL (Pull), Username, CA Certificate File, and Pull's Repositories, Ledger URL, Image List, Rewrite Base Path and Output Directory are evaluated against the NiFi environment, so `${REGISTRY_HOST}` or `https://${REGISTRY_HOST}:5000` read the environment variable of that name. NiFi 2.11's Python API answers a plain `${NAME}` from the attribute map alone, so `nifi_attributes.py` puts the environment behind that map. Push's Registry URL, Tar File and Rewrite Base Path read FlowFile attributes instead.
+Registry URL (Pull and Export), Username, and Pull's and Export's Repositories, Ledger URL, Image List, Rewrite Base Path and Output Directory are evaluated against the NiFi environment, so `${REGISTRY_HOST}` or `https://${REGISTRY_HOST}:5000` read the environment variable of that name. NiFi 2.11's Python API answers a plain `${NAME}` from the attribute map alone, so `nifi_attributes.py` puts the environment behind that map. Push's Registry URL, Tar File and Rewrite Base Path read FlowFile attributes instead.
+
+## Upgrading to 2.0.0
+
+**CA Certificate File was removed** from Pull and Push, so a flow that set it no longer trusts that CA (Pull would carry the old value as a dynamic attribute; delete it) until you set **SSL Context Service** instead: a StandardSSLContextService (or any SSLContextProvider) whose truststore holds the CAs. The processors read the CA certificates from that truststore and trust them in addition to the system store. A keystore in the service is not used (no client certificates). Flows pinned to 1.4.0 keep working until you change the version.
 
 ## Preconditions
 
 - Output Directory and the PutFile directory exist on every node and are writable by the NiFi user.
-- `SSL_CERT_FILE` names the CA bundle, such as the cert-manager `ca.crt`, or CA Certificate File is set.
+- `SSL_CERT_FILE` names the CA bundle, such as the cert-manager `ca.crt`, or SSL Context Service is set.
 
 ## Expected result
 

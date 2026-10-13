@@ -36,8 +36,9 @@ class Collisions(unittest.TestCase):
         first = source.add_image("a/app", "v1", "a")
         second = source.add_image("b/app", "v1", "b")
         path = export(source, [("a/app", "v1", first), ("b/app", "v1", second)])
+        target = FakeRegistry()
         with self.assertRaises(c.RegistryError):
-            c.push_export(FakeRegistry(), path, rewrite="merged", move_tags=True)
+            c.push_export(target, path, rewrite="merged", move_tags=True)
 
     def test_the_same_digest_listed_twice_is_not_a_collision(self):
         source = FakeRegistry()
