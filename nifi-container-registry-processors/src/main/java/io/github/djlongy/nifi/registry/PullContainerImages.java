@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
 import org.apache.commons.compress.archivers.tar.TarConstants;
+import org.apache.nifi.annotation.behavior.DynamicProperty;
 import org.apache.nifi.annotation.behavior.InputRequirement;
 import org.apache.nifi.annotation.behavior.Stateful;
 import org.apache.nifi.annotation.behavior.TriggerSerially;
@@ -66,6 +67,10 @@ import java.util.concurrent.TimeUnit;
         + "synced since the last export, by the digest the ledger records, and remembers what it exported in cluster "
         + "state; it never writes the ledger. Given a FlowFile listing images, one per line, it exports those on demand.")
 @SeeAlso(PushContainerImages.class)
+@DynamicProperty(name = "An attribute name", value = "Its value", expressionLanguageScope = ExpressionLanguageScope.FLOWFILE_ATTRIBUTES,
+        description = "Added to every tar this processor emits, after its own attributes, so the next step can route at "
+                + "once (diode attributes, routing hints). Expression Language sees the tar's attributes: "
+                + "${filename}, ${registry.images}, ${X-Sha256}.")
 @InputRequirement(InputRequirement.Requirement.INPUT_ALLOWED)
 @TriggerSerially  // one run at a time: two would read the same state and export the same images
 @Stateful(scopes = Scope.CLUSTER, description = "For each repository:tag exported from the ledger, the digest exported. "
@@ -200,6 +205,13 @@ public class PullContainerImages extends AbstractProcessor {
             MAX_SIZE, PushContainerImages.CONNECT_TIMEOUT, PushContainerImages.REQUEST_TIMEOUT);
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'");
+
+    @Override
+    protected PropertyDescriptor getSupportedDynamicPropertyDescriptor(String name) {
+        return new PropertyDescriptor.Builder().name(name).dynamic(true).required(false)
+                .expressionLanguageSupported(ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
+                .addValidator(StandardValidators.ATTRIBUTE_KEY_PROPERTY_NAME_VALIDATOR).build();
+    }
 
     @Override
     protected List<PropertyDescriptor> getSupportedPropertyDescriptors() {
@@ -526,6 +538,14 @@ public class PullContainerImages extends AbstractProcessor {
                 attributes.put("registry.images", String.join("\n", batch.stream()
                         .map(i -> i.wanted().target() + ":" + i.wanted().tag() + "@" + i.wanted().digest()).toList()));
                 flowFile = session.putAllAttributes(flowFile, attributes);
+                Map<String, String> extra = new LinkedHashMap<>();
+                for (PropertyDescriptor property : context.getProperties().keySet()) {
+                    if (property.isDynamic()) {
+                        extra.put(property.getName(),
+                                context.getProperty(property).evaluateAttributeExpressions(flowFile).getValue());
+                    }
+                }
+                flowFile = session.putAllAttributes(flowFile, extra);
                 created.set(created.size() - 1, flowFile);
                 getLogger().info("Exported {} image tag(s) from {} as {}", batch.size(), registry.host(), name);
             }

@@ -191,6 +191,8 @@ class PullContainerImagesTest {
         runner.setIncomingConnection(true);
         runner.setProperty(PullContainerImages.MAX_SIZE, "1 B");
         runner.setProperty(PushContainerImages.STRIP_BASE_PATH, "true");
+        runner.setProperty("diode.route", "container-images");                 // dynamic: added to every tar
+        runner.setProperty("first.image", "${registry.images:substringBefore(':')}");
         runner.enqueue("team/app:1.0\n# a comment\nteam/multi:2.0\n");
         runner.run();
         runner.assertTransferCount(PullContainerImages.REL_ORIGINAL, 1);
@@ -198,6 +200,9 @@ class PullContainerImagesTest {
         assertEquals(2, tars.size());
         assertTrue(tars.get(0).getAttribute("filename").endsWith("-001-of-002.tar"));
         assertEquals("app:1.0@" + digest("team/app:1.0"), tars.get(0).getAttribute("registry.images"));
+        tars.get(0).assertAttributeEquals("diode.route", "container-images");
+        tars.get(0).assertAttributeEquals("first.image", "app");
+        tars.get(1).assertAttributeEquals("first.image", "multi");
 
         // The form registry.images carries: repository:tag@digest, with or without the registry host.
         runner.clearTransferState();
