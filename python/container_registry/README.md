@@ -5,7 +5,7 @@ PushContainerImages and PullContainerImages as NiFi Python processors: same tar,
 ## Requirements
 
 - Apache NiFi 2.x with Python enabled (`nifi.python.command`), Python 3.10 or later on the NiFi host.
-- Nothing from PyPI. `requirements.txt` lists no packages, so there is nothing to mirror across the diode and `UV_INDEX_URL` is not consulted.
+- Nothing from PyPI. `python/requirements.txt` lists no packages and sits outside this directory, so NiFi never runs `uv` for it and `UV_INDEX_URL` is not consulted.
 - Disk on every node for the largest export, twice: the tar Pull writes, and the tar Push reads.
 
 ## Install
@@ -16,7 +16,7 @@ Copy this directory into the Python extensions directory (`nifi.python.extension
 cp -r python/container_registry /opt/nifi/nifi-current/python_extensions/
 ```
 
-NiFi discovers both processors within a minute, listed as `PullContainerImages 1.3.0` and `PushContainerImages 1.3.0` (bundle `python-extensions`). An edited file reloads when the processor next starts.
+NiFi discovers both processors within a minute, listed as `PullContainerImages 1.4.0` and `PushContainerImages 1.4.0` (bundle `python-extensions`). An edited file reloads when the processor next starts.
 
 ## Properties
 
@@ -60,10 +60,11 @@ A FlowFile out of Push still holds the tar. Auto-terminate `success`, or give it
 
 ## Behaviour
 
-- Pull keeps `repository:tag -> digest` in cluster state, pruned to what the source still lists, and writes it only after the tar is complete. The tar is written as a hidden `.<name>.partial` and renamed when done. A failed run leaves no tar and no state change.
+- Pull keeps `repository:tag -> digest` (16 hex characters of it) in one compressed cluster-state value, pruned to what the source still lists, about 30 bytes a tag against the roughly 1 MB ZooKeeper allows. Past 900 KB the run fails and says to narrow Repositories. It is and writes it only after the tar is complete. The tar is written as a hidden `.<name>.partial` and renamed when done. A failed run leaves no tar and no state change.
 - One tar per run. With Max Export Size, the images left over go on the next run.
 - Pull's FlowFile has no content. Its attributes: `filename`, `Filename`, `absolute.path`, `Content-Type`, `X-Sha256`, `X-Artifact-Type`, `X-Artifact-Format`, `registry.host`, `registry.images`, `file.size`, and the dynamic properties.
 - Blobs stream between registry and disk in 8 MiB chunks and are checked against their digests. Memory stays flat whatever the image size.
+- Push retries a failed blob upload twice from the tar, authorizing again after a 401. With Delete Tar File it renames the tar while it works, so two tasks given the same path cannot both push it; a tar it cannot delete leaves the FlowFile on `success` with `registry.tar.leftover`.
 - Push checks every target tag before the first upload, skips blobs the registry holds, mounts a blob shared across repositories, and reads each tag back. Its success FlowFile carries `registry.images`, `registry.pushed` and `registry.present`.
 - A redirect to object storage is followed without the registry's credentials.
 

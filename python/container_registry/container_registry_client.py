@@ -21,6 +21,7 @@ import os
 import re
 import ssl
 import tarfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -37,6 +38,7 @@ TAG = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}")
 REPOSITORY = re.compile(r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*")
 MEDIA_TYPE = re.compile(r"[\w.+-]+/[\w.+-]+")
 CHUNK = 8 * 1024 * 1024
+UPLOAD_ATTEMPTS = 3  # a blob upload that fails mid-stream starts again from the tar this many times
 INDEX = "export.json"
 KEPT = re.compile(r"export\.json|[0-9]{6}/(?:manifest|[0-9a-f]{64}\.manifest)\.json")
 
@@ -66,6 +68,8 @@ def sha256_hex(data):
 
 def rebase(target, rewrite=None, strip=False):
     """target with its first path segment replaced (rewrite) or removed (strip)."""
+    if strip and rewrite:
+        raise RegistryError("set Rewrite Base Path or Strip Base Path, not both")
     if strip:
         if "/" not in target:
             raise RegistryError(f"{target} has no base path to strip")
@@ -230,7 +234,9 @@ class RegistryClient:
 
     def _paged(self, repository, first, field, what):
         out, url, seen = [], f"{self.base}/v2/{first}", set()
-        while url and url not in seen and len(seen) < 1000:
+        while url:
+            if url in seen or len(seen) >= 10000:
+                raise RegistryError(f"listing {what} did not end after {len(seen)} pages")
             seen.add(url)
             path = urllib.parse.urlsplit(url)
             path = path.path.split("/v2/", 1)[1] + (f"?{path.query}" if path.query else "")  # onto Registry URL's base
@@ -284,6 +290,8 @@ class RegistryClient:
             headers = self._with_auth((repository, "pull,push", None), headers)
         response = self._open("PUT", url, headers, stream if size else b"")
         response.read()
+        if response.status == 401:
+            self.auth.pop((repository, "pull,push", None), None)  # expired mid-upload: the next attempt authorizes again
         self._expect(response, f"upload blob {digest} to {repository}", 201, 204)
 
     def put_manifest(self, repository, reference, manifest, media_type):
@@ -302,6 +310,8 @@ class _Hashing(io.RawIOBase):
         return True
 
     def read(self, n=-1):
+        if n == 0:
+            return b""
         data = self.stream.read(n if n and n > 0 else CHUNK)
         self.digest.update(data)
         self.count += len(data)
@@ -417,8 +427,20 @@ def push_export(client, path, rewrite=None, strip=False, move_tags=False, log=No
                     if upload is None:
                         continue  # mounted
                 member = tar.getmember(name)
-                stream = _Hashing(tar.extractfile(member))
-                client.upload_blob(repository, digest, stream, member.size, upload)
+                for attempt in range(1, UPLOAD_ATTEMPTS + 1):
+                    stream = _Hashing(tar.extractfile(member))
+                    try:
+                        client.upload_blob(repository, digest, stream, member.size, upload)
+                        break
+                    except (RegistryError, OSError) as error:
+                        if "sha256:" + stream.digest.hexdigest() != digest and stream.count == member.size:
+                            raise RegistryError(f"blob {digest} in the tar does not match its digest") from error
+                        if attempt == UPLOAD_ATTEMPTS:
+                            raise
+                        if log:
+                            log(f"Upload of {digest} to {repository} failed ({error}); attempt {attempt + 1} of {UPLOAD_ATTEMPTS}")
+                        time.sleep(5 * attempt)
+                        upload = None  # a fresh upload session
                 if "sha256:" + stream.digest.hexdigest() != digest or stream.count != member.size:
                     raise RegistryError(f"blob {digest} in the tar does not match its digest")
                 uploaded.setdefault(digest, repository)

@@ -1,24 +1,26 @@
+import base64
 import json
 import os
 import re
 import urllib.request
+import zlib
 from datetime import datetime, timezone
 
 from nifiapi.__jvm__ import JvmHolder
 from nifiapi.componentstate import Scope
+from nifiapi.documentation import use_case
 from nifiapi.flowfilesource import FlowFileSource, FlowFileSourceResult
-from nifiapi.properties import ExpressionLanguageScope, PropertyDescriptor, StandardValidators
+from nifiapi.properties import ExpressionLanguageScope, PropertyDependency, PropertyDescriptor, StandardValidators
+from nifiapi.relationship import Relationship
 
 from container_registry_client import (DIGEST, REPOSITORY, TAG, RegistryClient, RegistryError, plan_image,
                                        rebase, web_opener, write_export)
 
 LISTING, LEDGER, IMAGE_LIST = "Registry Listing", "Ledger", "Image List"
-INITIALISED = "__initialised"
+STATE_KEY = "exported"   # zlib + base64 JSON {"repository:tag": first 16 hex of the digest}
+STATE_LIMIT = 900_000    # ZooKeeper caps a component's cluster state near 1 MB
 UNITS = {"B": 1, "KB": 1024, "MB": 1024 ** 2, "GB": 1024 ** 3, "TB": 1024 ** 4}
 
-
-def _prop(name, description, **kw):
-    return PropertyDescriptor(name=name, description=description, **kw)
 
 
 class _Attributes:
@@ -36,61 +38,87 @@ class _Attributes:
         return java
 
 
+def load_state(raw):
+    return json.loads(zlib.decompress(base64.b64decode(raw))) if raw else None
+
+
+def dump_state(exported):
+    raw = base64.b64encode(zlib.compress(json.dumps(exported, separators=(",", ":"), sort_keys=True).encode(), 9)).decode()
+    if len(raw) > STATE_LIMIT:
+        raise RegistryError(f"state for {len(exported)} image tags is {len(raw)} bytes, over the {STATE_LIMIT} byte limit "
+                            "of cluster state; narrow Repositories or Tag Filter, or split across processors")
+    return raw
+
+
+def short(digest):
+    return digest[7:23]
+
+
+@use_case(description="Export new and changed images from a low-side registry for a data diode.",
+          configuration="""Set Registry URL, Repositories (team/* or *) and Output Directory. Run on the primary node
+          every 15 minutes. Send success to FetchFile with Completion Strategy Delete File, then to the diode.""",
+          keywords=["container", "diode", "registry", "export"])
 class PullContainerImages(FlowFileSource):
     class Java:
         implements = ["org.apache.nifi.python.processor.FlowFileSource"]
 
     class ProcessorDetails:
-        version = "1.3.0"
+        version = "1.4.0"
         description = ("Exports container images from an OCI registry as a mirror.py export tar written to Output "
                        "Directory, and emits a FlowFile that names it, for FetchFile to read. Each run exports what "
                        "changed since the last export, recorded in cluster state. Schedule it on the primary node only.")
         tags = ["container", "image", "oci", "docker", "registry", "export", "diode"]
 
-    REGISTRY_URL = _prop("Registry URL", "The registry to export from: https://registry.example.internal, or "
+    REGISTRY_URL = PropertyDescriptor(name="Registry URL", description="The registry to export from: https://registry.example.internal, or "
                          "https://<host>/artifactory/api/docker/<repo-key> for Artifactory.", required=True,
                          validators=[StandardValidators.URL_VALIDATOR],
                          expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
-    USERNAME = _prop("Username", "Registry user. Empty: anonymous.",
+    USERNAME = PropertyDescriptor(name="Username", description="Registry user. Empty: anonymous.",
                      expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
-    PASSWORD = _prop("Password", "Registry password or token.", sensitive=True)
-    CA_FILE = _prop("CA Certificate File", "A PEM file of CA certificates trusted in addition to the system store "
+    PASSWORD = PropertyDescriptor(name="Password", description="Registry password or token.", sensitive=True)
+    CA_FILE = PropertyDescriptor(name="CA Certificate File", description="A PEM file of CA certificates trusted in addition to the system store "
                     "and SSL_CERT_FILE, for the registry and the Ledger URL.",
                     expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
-    IMAGE_SOURCE = _prop("Image Source", "What a run exports. Registry Listing: every tag of Repositories whose "
+    IMAGE_SOURCE = PropertyDescriptor(name="Image Source", description="What a run exports. Registry Listing: every tag of Repositories whose "
                          "digest differs from the last export. Ledger: what the mirror pipeline's ledger says it "
                          "synced. Image List: the images in Image List.", required=True,
-                         allowable_values=[LISTING, LEDGER, IMAGE_LIST], default_value=LISTING)
-    REPOSITORIES = _prop("Repositories", "For Registry Listing: repositories, separated by commas or new lines. "
+                         allowable_values=["Registry Listing", "Ledger", "Image List"], default_value="Registry Listing")
+    REPOSITORIES = PropertyDescriptor(name="Repositories", description="For Registry Listing: repositories, separated by commas or new lines. "
                          "team/* matches every catalog repository with that prefix, * matches all.",
-                         expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
-    TAG_FILTER = _prop("Tag Filter", "For Registry Listing: a regular expression a tag must match in full. The "
+                         expression_language_scope=ExpressionLanguageScope.ENVIRONMENT,
+                   dependencies=[PropertyDependency(IMAGE_SOURCE, "Registry Listing")])
+    TAG_FILTER = PropertyDescriptor(name="Tag Filter", description="For Registry Listing: a regular expression a tag must match in full. The "
                        "default skips sha256-... signature and attestation tags.", required=True,
-                       default_value="(?!sha256-).+", validators=[StandardValidators.REGULAR_EXPRESSION_VALIDATOR])
-    LEDGER_URL = _prop("Ledger URL", "For Ledger: the ledger.json URL, read only.",
-                       expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
-    LEDGER_TOKEN = _prop("Ledger Token", "Token for the Ledger URL.", sensitive=True)
-    LEDGER_TOKEN_HEADER = _prop("Ledger Token Header", "Header that carries the Ledger Token: PRIVATE-TOKEN for "
-                                "GitLab, Authorization for a Bearer value.", default_value="PRIVATE-TOKEN")
-    IMAGE_LIST = _prop("Image List", "For Image List: one image per line, repository:tag or "
+                       default_value="(?!sha256-).+", validators=[StandardValidators.REGULAR_EXPRESSION_VALIDATOR],
+                   dependencies=[PropertyDependency(IMAGE_SOURCE, "Registry Listing")])
+    LEDGER_URL = PropertyDescriptor(name="Ledger URL", description="For Ledger: the ledger.json URL, read only.",
+                       expression_language_scope=ExpressionLanguageScope.ENVIRONMENT,
+                   dependencies=[PropertyDependency(IMAGE_SOURCE, "Ledger")])
+    LEDGER_TOKEN = PropertyDescriptor(name="Ledger Token", description="Token for the Ledger URL.", sensitive=True,
+                   dependencies=[PropertyDependency(IMAGE_SOURCE, "Ledger")])
+    LEDGER_TOKEN_HEADER = PropertyDescriptor(name="Ledger Token Header", description="Header that carries the Ledger Token: PRIVATE-TOKEN for "
+                                "GitLab, Authorization for a Bearer value.", default_value="PRIVATE-TOKEN",
+                   dependencies=[PropertyDependency(IMAGE_SOURCE, "Ledger")])
+    IMAGE_LIST = PropertyDescriptor(name="Image List", description="For Image List: one image per line, repository:tag or "
                        "repository@sha256:..., optionally prefixed with the registry host. # starts a comment.",
-                       expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
-    INITIAL_RUN = _prop("Initial Run", "What a run does when the state is empty. Export All exports every image. "
+                       expression_language_scope=ExpressionLanguageScope.ENVIRONMENT,
+                   dependencies=[PropertyDependency(IMAGE_SOURCE, "Image List")])
+    INITIAL_RUN = PropertyDescriptor(name="Initial Run", description="What a run does when the state is empty. Export All exports every image. "
                         "Record Only records the current digests and exports nothing.", required=True,
                         allowable_values=["Export All", "Record Only"], default_value="Export All")
-    REWRITE = _prop("Rewrite Base Path", "Replace the first path segment of each target repository with this.",
+    REWRITE = PropertyDescriptor(name="Rewrite Base Path", description="Replace the first path segment of each target repository with this.",
                     expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
-    STRIP = _prop("Strip Base Path", "Remove the first path segment of each target repository.", required=True,
+    STRIP = PropertyDescriptor(name="Strip Base Path", description="Remove the first path segment of each target repository.", required=True,
                   allowable_values=["true", "false"], default_value="false")
-    OUTPUT_DIR = _prop("Output Directory", "Where the tar is written. It must hold the largest export.",
+    OUTPUT_DIR = PropertyDescriptor(name="Output Directory", description="Where the tar is written. It must hold the largest export.",
                        required=True, expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
-    PREFIX = _prop("Filename Prefix", "Start of each tar's name.", required=True, default_value="container-images-")
-    ARTIFACT_TYPE = _prop("Artifact Type", "The X-Artifact-Type attribute.", required=True,
+    PREFIX = PropertyDescriptor(name="Filename Prefix", description="Start of each tar's name.", required=True, default_value="container-images-")
+    ARTIFACT_TYPE = PropertyDescriptor(name="Artifact Type", description="The X-Artifact-Type attribute.", required=True,
                           default_value="container-images")
-    MAX_SIZE = _prop("Max Export Size", "The most blob bytes one tar holds, such as 20 GB. The rest go in the next "
+    MAX_SIZE = PropertyDescriptor(name="Max Export Size", description="The most blob bytes one tar holds, such as 20 GB. The rest go in the next "
                      "run. An image larger than this goes alone. Empty: no limit.",
                      validators=[StandardValidators.DATA_SIZE_VALIDATOR])
-    TIMEOUT = _prop("Request Timeout", "Seconds a registry read may stall.", required=True, default_value="600",
+    TIMEOUT = PropertyDescriptor(name="Request Timeout", description="Seconds a registry read may stall.", required=True, default_value="600",
                     validators=[StandardValidators.POSITIVE_INTEGER_VALIDATOR])
 
     PROPERTIES = [REGISTRY_URL, USERNAME, PASSWORD, CA_FILE, IMAGE_SOURCE, REPOSITORIES, TAG_FILTER, LEDGER_URL,
@@ -99,6 +127,9 @@ class PullContainerImages(FlowFileSource):
 
     def __init__(self, **kwargs):
         super().__init__()
+
+    def getRelationships(self):
+        return [Relationship("success", "A FlowFile naming each export tar written to Output Directory")]
 
     def getPropertyDescriptors(self):
         return self.PROPERTIES
@@ -191,30 +222,32 @@ class PullContainerImages(FlowFileSource):
         source = context.getProperty(self.IMAGE_SOURCE).getValue()
         found = {LISTING: self._from_listing, LEDGER: self._from_ledger, IMAGE_LIST: self._from_list}[source]
         state_manager = context.getStateManager()
-        exported = state_manager.getState(Scope.CLUSTER).toMap()
-        initial = INITIALISED not in exported
+        exported = load_state(state_manager.getState(Scope.CLUSTER).get(STATE_KEY))
+        initial = exported is None
+        exported = exported or {}
 
         current = {f"{r}:{t}": (r, t, d) for r, t, d in found(context, client)}
         # Remember only what the source still lists, so the state does not grow with every tag ever seen.
         state = {k: v for k, v in exported.items() if k in current}
-        state[INITIALISED] = "true"
-        wanted = [v for k, v in current.items() if v[2] and exported.get(k) != v[2]]
+        wanted = [v for k, v in current.items() if v[2] and exported.get(k) != short(v[2])]
+
+        def save():
+            state_manager.setState({STATE_KEY: dump_state(state)}, Scope.CLUSTER)
 
         if initial and context.getProperty(self.INITIAL_RUN).getValue() == "Record Only":
-            state.update({f"{r}:{t}": d for r, t, d in wanted})
-            state_manager.setState(state, Scope.CLUSTER)
+            state.update({f"{r}:{t}": short(d) for r, t, d in wanted})
+            save()
             self.logger.info(f"Initial run: recorded {len(wanted)} image tag(s) without exporting them")
             return None
         if not wanted:
-            if state != exported:
-                state_manager.setState(state, Scope.CLUSTER)
+            if initial or state != exported:
+                save()
             return None
 
         limit = self._max_size(context)
         rewrite = self._value(context, self.REWRITE)
         strip = context.getProperty(self.STRIP).getValue() == "true"
-        if strip and rewrite:
-            raise RegistryError("set Rewrite Base Path or Strip Base Path, not both")
+        rebase("check/x", rewrite, strip)  # fails the run when both are set
         batch, planned, total = [], {}, 0
         for repository, tag, digest in wanted:
             key = f"{repository}@{digest}"
@@ -237,7 +270,7 @@ class PullContainerImages(FlowFileSource):
             batch.append((repository, tag, digest, target, root, children, blobs))
             total += size
         if not batch:
-            state_manager.setState(state, Scope.CLUSTER)
+            save()
             return None
 
         directory = self._value(context, self.OUTPUT_DIR)
@@ -260,8 +293,8 @@ class PullContainerImages(FlowFileSource):
                     value = context.getProperty(descriptor).evaluateAttributeExpressions(_Attributes(attributes))
                     attributes[descriptor.name] = value.getValue() or ""
             # Last, so a failure above leaves the state as it was and the next run exports these again.
-            state.update({f"{r}:{t}": d for r, t, d, *_ in batch})
-            state_manager.setState(state, Scope.CLUSTER)
+            state.update({f"{r}:{t}": short(d) for r, t, d, *_ in batch})
+            save()
         except Exception:
             for leftover in (path, os.path.join(directory, "." + name + ".partial")):
                 if os.path.exists(leftover):
@@ -274,5 +307,7 @@ class PullContainerImages(FlowFileSource):
         value = context.getProperty(self.MAX_SIZE).getValue()
         if not value:
             return 0
-        number, unit = re.fullmatch(r"\s*([\d.]+)\s*([KMGT]?B)\s*", value.upper()).groups()
-        return int(float(number) * UNITS[unit])
+        match = re.fullmatch(r"\s*([\d.]+)\s*([KMGT]?B)?\s*", value.upper())
+        if not match:
+            raise RegistryError(f"Max Export Size {value!r} is not a size such as 20 GB")
+        return int(float(match.group(1)) * UNITS[match.group(2) or "B"])
