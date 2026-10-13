@@ -1,0 +1,20 @@
+---
+variables:
+  # Any image with Java 21. One without mvn downloads Maven MAVEN_VERSION and checks it against MAVEN_SHA512.
+  MAVEN_IMAGE: 'docker.io/library/maven@sha256:6fdc855a6ed81d288ca7ca37ac6ff5e9308b612485c0801d70b25a858c83d237'
+  MAVEN_VERSION: '3.9.11'
+  MAVEN_SHA512: 'bcfe4fe305c962ace56ac7b5fc7a08b87d5abd8b7e89027ab251069faebee516b0ded8961445d6d91ec1985dfe30f8153268843c89aa392733d1a3ec956c9978'
+
+build:
+  image: $MAVEN_IMAGE
+  script:
+    - |
+      if ! command -v mvn >/dev/null; then
+        curl -fsSL -o /tmp/maven.tgz "https://archive.apache.org/dist/maven/maven-3/$MAVEN_VERSION/binaries/apache-maven-$MAVEN_VERSION-bin.tar.gz"
+        echo "$MAVEN_SHA512  /tmp/maven.tgz" | sha512sum -c -
+        tar -xzf /tmp/maven.tgz -C /tmp && export PATH="/tmp/apache-maven-$MAVEN_VERSION/bin:$PATH"
+      fi
+    - mvn -B -ntp package
+  artifacts:
+    paths: [nifi-container-registry-nar/target/*.nar]
+    expire_in: 30 days
