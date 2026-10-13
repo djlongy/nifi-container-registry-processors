@@ -47,7 +47,7 @@ The tar both processors read and write, and `mirror.py export` and `import` use:
 ```text
 export.json            {"images": [{"dir": "000000", "source": "...", "target": "team/app", "tag": "1.0", "digest": "sha256:..."}]}
 000000/manifest.json   the image's manifest or index, byte for byte (its sha256 is the digest)
-000000/<hex>.manifest.json   each child manifest of an index
+000000/<hex>.manifest.json   each manifest below an index, nested indexes included
 000000/<hex>           each config and layer blob; one shared with an earlier directory is a hard link to it
 000000/version         Directory Transport Version: 1.1 (the skopeo dir: layout)
 ```

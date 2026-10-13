@@ -9,16 +9,19 @@ TLS trusts the system store plus SSL_CERT_FILE (OpenSSL reads it), plus an optio
 The tar layout is the mirror.py export format:
   export.json                  {"images": [{"dir", "source", "target", "tag", "digest"}]}
   NNNNNN/manifest.json         the image's manifest or index, byte for byte
-  NNNNNN/<hex>.manifest.json   each child manifest of an index
+  NNNNNN/<hex>.manifest.json   each manifest below an index, nested indexes included
   NNNNNN/<hex>                 each config and layer blob; a repeat is a hard link to the first
   NNNNNN/version               Directory Transport Version: 1.1
 """
 import base64
 import hashlib
+import http.client
 import io
+import ipaddress
 import json
 import os
 import re
+import socket
 import ssl
 import tarfile
 import time
@@ -38,7 +41,16 @@ TAG = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}")
 REPOSITORY = re.compile(r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*")
 MEDIA_TYPE = re.compile(r"[\w.+-]+/[\w.+-]+")
 CHUNK = 8 * 1024 * 1024
+MANIFEST_LIMIT = 4 * 1024 * 1024    # the largest manifest the distribution spec asks registries to accept
+CONTROL_LIMIT = 16 * 1024 * 1024    # token, listing and upload answers, which are small
 UPLOAD_ATTEMPTS = 3  # a blob upload that fails mid-stream starts again from the tar this many times
+FOREIGN_LAYERS = {
+    "application/vnd.docker.image.rootfs.foreign.diff.tar.gzip",
+    "application/vnd.oci.image.layer.nondistributable.v1.tar",
+    "application/vnd.oci.image.layer.nondistributable.v1.tar+gzip",
+    "application/vnd.oci.image.layer.nondistributable.v1.tar+zstd",
+}
+MAX_INDEX_DEPTH = 8  # nested indexes a graph may have before it is refused as malformed
 INDEX = "export.json"
 KEPT = re.compile(r"export\.json|[0-9]{6}/(?:manifest|[0-9a-f]{64}\.manifest)\.json")
 
@@ -47,19 +59,103 @@ class RegistryError(Exception):
     pass
 
 
+def read_limited(response, limit, what):
+    """The whole body, or a RegistryError once it is longer than limit; the response is closed either way."""
+    try:
+        body = response.read(limit + 1)
+    finally:
+        response.close()
+    if len(body) > limit:
+        raise RegistryError(f"{what}: the answer is over {limit} bytes")
+    return body
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     """Redirects are followed by hand, so credentials never travel to another host (object storage)."""
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
 
 
-def web_opener(context):
-    """http and https only (no file: or ftp:), and no automatic redirects."""
+def _checking(connection_class, check):
+    """connection_class that resolves the host once, connects, and hands the peer address and every address of the
+    answer to check(host, peer, answer) before anything is sent. When check returns False the request goes out
+    without an Authorization header."""
+    class Checked(connection_class):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._create_connection = self._connect_checked
+            self._credentials = True
+
+        def _connect_checked(self, address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None):
+            host, port = address
+            answer = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)
+            failure = None
+            for family, kind, proto, _name, sockaddr in answer:
+                sock = socket.socket(family, kind, proto)
+                try:
+                    if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT:
+                        sock.settimeout(timeout)
+                    if source_address:
+                        sock.bind(source_address)
+                    sock.connect(sockaddr)
+                except OSError as error:
+                    sock.close()
+                    failure = error
+                    continue
+                try:
+                    self._credentials = check(host, sock.getpeername()[0], [info[4][0] for info in answer]) is not False
+                except Exception:
+                    sock.close()
+                    raise
+                return sock
+            raise failure or OSError("getaddrinfo returned no address")
+
+        def putrequest(self, *args, **kwargs):
+            if self.sock is None:
+                self.connect()  # so putheader knows whether this peer may see credentials
+            return super().putrequest(*args, **kwargs)
+
+        def putheader(self, header, *values):
+            if self._credentials or header.lower() != "authorization":
+                super().putheader(header, *values)
+    return Checked
+
+
+def web_opener(context, check=None):
+    """http and https only (no file: or ftp:), and no automatic redirects. With check, every connection is
+    vetted by check(host, peer ip) once it is made and before a byte is sent."""
+    class Http(urllib.request.HTTPHandler):
+        def http_open(self, req):
+            return self.do_open(_checking(http.client.HTTPConnection, check) if check else http.client.HTTPConnection, req)
+
+    class Https(urllib.request.HTTPSHandler):
+        def https_open(self, req):
+            return self.do_open(_checking(http.client.HTTPSConnection, check) if check else http.client.HTTPSConnection,
+                                req, context=self._context)
+
     opener = urllib.request.OpenerDirector()
-    for handler in (urllib.request.HTTPHandler(), urllib.request.HTTPSHandler(context=context),
+    for handler in (Http(), Https(context=context),
                     urllib.request.HTTPErrorProcessor(), urllib.request.HTTPDefaultErrorHandler(), _NoRedirect()):
         opener.add_handler(handler)
     return opener
+
+
+def next_link(header, base):
+    """The URL of the rel=next link in a Link header, whatever order its parameters come in, or None."""
+    for target, params in re.findall(r"<([^>]*)>([^<]*)", header or ""):
+        for name, value in re.findall(r';\s*([^\s=;,]+)\s*=\s*("[^"]*"|[^\s;,]*)', params):
+            if name.lower() == "rel" and "next" in value.strip('"').lower().split():
+                return urllib.parse.urljoin(base, target.strip())
+    return None
+
+
+def redact(url):
+    """url as scheme://host/path: no user name, password, query (pre-signed signatures) or fragment, for messages."""
+    try:
+        parts = urllib.parse.urlsplit(str(url))
+        return urllib.parse.urlunsplit((parts.scheme, parts.netloc.rpartition("@")[2], parts.path, "", ""))
+    except ValueError:
+        return "<unreadable URL>"
 
 
 def sha256_hex(data):
@@ -84,12 +180,14 @@ def rebase(target, rewrite=None, strip=False):
 
 
 class RegistryClient:
-    def __init__(self, url, username=None, password=None, ca_file=None, timeout=3600):
+    def __init__(self, url, username=None, password=None, ca_file=None, timeout=3600, trusted_hosts=None):
         url = (url or "").rstrip("/")
         if not url.startswith(("https://", "http://")):
-            raise RegistryError(f"Registry URL must start with https:// or http://: {url}")
-        self.base = url
+            raise RegistryError("Registry URL must start with https:// or http://")
         parts = urllib.parse.urlsplit(url)
+        if "@" in parts.netloc:
+            raise RegistryError("Registry URL must not carry a user name or password; set Username and Password")
+        self.base = url
         self.host = parts.netloc
         self.base_path = parts.path
         self.username = username or None
@@ -98,20 +196,72 @@ class RegistryClient:
         context = ssl.create_default_context()  # system store, and SSL_CERT_FILE when set
         if ca_file:
             context.load_verify_locations(cafile=ca_file)
-        self.opener = web_opener(context)
+        self.pins = {}  # host name -> the addresses its first connection saw it resolve to
+        self.opener = web_opener(context, self._check_pinned)
+        self.trusted_names, self.trusted_nets = set(), []
+        for entry in re.split(r"[,\s]+", trusted_hosts or ""):
+            if not entry:
+                continue
+            try:
+                self.trusted_nets.append(ipaddress.ip_network(entry.strip("[]"), strict=False))
+            except ValueError:
+                self.trusted_names.add(entry.lower())
+        self.storage_opener = web_opener(context, self._check_storage)  # for hosts the registry points at
         self.scheme = parts.scheme
         self.context = context
         self.auth = {}
 
     # -- transport ---------------------------------------------------------------------------
-    def _open(self, method, url, headers=None, data=None):
+    def _check_storage(self, host, ip, answer=()):
+        """Raise unless host, at ip, may receive what the registry told us to send or fetch: a public address, or
+        a Trusted Storage Hosts entry. Loopback, link-local (cloud metadata), private and similar are refused."""
+        address = ipaddress.ip_address(ip.split("%")[0])
+        if address.version == 6 and address.ipv4_mapped:
+            address = address.ipv4_mapped
+        if ((host or "").lower().strip("[]") in self.trusted_names
+                or any(address in net for net in self.trusted_nets if net.version == address.version)
+                or (address.is_global and not address.is_multicast)):
+            return
+        raise RegistryError(f"{self.host} named {host}, which is {address}, not a public address; add it to "
+                            "Trusted Storage Hosts if it is the registry's object storage")
+
+    @staticmethod
+    def _address(ip):
+        address = ipaddress.ip_address(ip.split("%")[0])
+        return str(address.ipv4_mapped if address.version == 6 and address.ipv4_mapped else address)
+
+    def _check_pinned(self, host, ip, answer=()):
+        """The first connection to a name pins every address that name resolved to (answer, and the peer ip), the
+        set of addresses of the same host. A later connection to that name at a pinned address may carry the
+        credentials. At any other address the name was not seen to resolve to, such as one it was re-pointed at,
+        the connection goes out without them, and only where _check_storage allows it. Returns True when
+        credentials may be sent."""
+        peer = self._address(ip)
+        seen = self.pins.setdefault((host or "").lower(), {self._address(a) for a in answer} | {peer})
+        if peer in seen:
+            return True
+        self._check_storage(host, ip)
+        return False
+
+    def _guard(self, url, what):
+        """The scheme rules for a URL the registry supplied; True when it is the registry's own host."""
+        target = urllib.parse.urlsplit(url)
+        if target.scheme not in ("http", "https"):
+            raise RegistryError(f"{what} points at {target.scheme}:, refused")
+        if self.scheme == "https" and target.scheme != "https":
+            raise RegistryError(f"{what} points at plain http on {target.hostname} from an https registry, refused")
+        return target.netloc == self.host and target.scheme == self.scheme
+
+    def _open(self, method, url, headers=None, data=None, foreign=False):
         request = urllib.request.Request(url, data=data, method=method, headers=headers or {})
         try:
-            return self.opener.open(request, timeout=self.timeout)
+            return (self.storage_opener if foreign else self.opener).open(request, timeout=self.timeout)
         except urllib.error.HTTPError as error:
             return error  # an HTTPError is a response: status, headers and body
         except urllib.error.URLError as error:
-            raise RegistryError(f"{method} {url}: {error.reason}") from error
+            raise RegistryError(f"{method} {redact(url)}: {error.reason}") from error
+        except (OSError, http.client.HTTPException, ValueError) as error:
+            raise RegistryError(f"{method} {redact(url)}: {type(error).__name__}") from None
 
     def _send(self, repository, actions, method, path, headers=None, data=None, mount_from=None):
         """One request to <base>/v2/<path>, authorised on a 401 and sent once more."""
@@ -152,7 +302,7 @@ class RegistryClient:
                 raise RegistryError(f"{self.host} asks for a username and password; set Username and Password")
             return self._basic()
         if challenge[:6].lower() != "bearer":
-            raise RegistryError(f"{self.host} refused the request with no usable challenge: {challenge}")
+            raise RegistryError(f"{self.host} refused the request with no usable challenge ({challenge.split(' ')[0]})")
         params = {k.lower(): v for k, v in re.findall(r'(\w+)="([^"]*)"', challenge)}
         realm = params.get("realm")
         if not realm:
@@ -160,7 +310,7 @@ class RegistryClient:
         realm_parts = urllib.parse.urlsplit(realm)
         if realm_parts.scheme != "https" and not (realm_parts.scheme == "http" and self.scheme == "http"
                                                   and realm_parts.hostname == urllib.parse.urlsplit(self.base).hostname):
-            raise RegistryError(f"{self.host} names a token realm {realm} that is not https; credentials not sent")
+            raise RegistryError(f"{self.host} names a token realm {redact(realm)} that is not https; credentials not sent")
         query = []
         if "service" in params:
             query.append(("service", params["service"]))
@@ -170,18 +320,23 @@ class RegistryClient:
         url = realm + ("&" if "?" in realm else "?") + urllib.parse.urlencode(query)
         headers = {"Authorization": self._basic()} if self.username else {}
         response = self._open("GET", url, headers)
-        body = response.read()
+        service = redact(realm)  # a realm can carry a signed or secret query
+        body = read_limited(response, CONTROL_LIMIT, f"token from {service}")
         if response.status != 200:
-            raise RegistryError(f"token from {realm}: HTTP {response.status}: {body[:300].decode(errors='replace')}")
-        token = json.loads(body).get("token") or json.loads(body).get("access_token")
+            raise RegistryError(f"token from {service}: HTTP {response.status}")  # the body may echo the realm query
+        answer = json.loads(body)
+        token = answer.get("token") or answer.get("access_token")
         if not token:
-            raise RegistryError(f"no token in the answer from {realm}")
+            raise RegistryError(f"no token in the answer from {service}")
         return "Bearer " + token
 
     @staticmethod
     def _expect(response, what, *codes):
         if response.status not in codes:
-            body = response.read()[:300].decode(errors="replace").strip()
+            try:
+                body = response.read(300).decode(errors="replace").strip()
+            finally:
+                response.close()
             raise RegistryError(f"{what}: HTTP {response.status}" + (f": {body}" if body else ""))
 
     # -- reads -------------------------------------------------------------------------------
@@ -199,7 +354,7 @@ class RegistryClient:
     def get_manifest(self, repository, reference):
         response = self._send(repository, "pull", "GET", f"{repository}/manifests/{reference}", {"Accept": MANIFEST_TYPES})
         self._expect(response, f"GET manifest {repository}:{reference}", 200)
-        body = response.read()
+        body = read_limited(response, MANIFEST_LIMIT, f"manifest {repository}:{reference}")
         if reference.startswith("sha256:") and "sha256:" + sha256_hex(body) != reference:
             raise RegistryError(f"manifest {repository}@{reference} does not match its digest")
         return body, response.headers.get("Content-Type", "").split(";")[0].strip()
@@ -224,12 +379,9 @@ class RegistryClient:
             location = urllib.parse.urljoin(response.url if hasattr(response, "url") else self.base,
                                             response.headers.get("Location", ""))
             response.close()
-            target = urllib.parse.urlsplit(location)
-            if target.scheme not in ("http", "https"):
-                raise RegistryError(f"blob {digest} redirects to {target.scheme}:, refused")
-            same = target.netloc == self.host and target.scheme == self.scheme
+            same = self._guard(location, f"blob {digest}")
             headers = self._with_auth((repository, "pull", None), {}) if same else {}
-            response = self._open("GET", location, headers)
+            response = self._open("GET", location, headers, foreign=not same)
         raise RegistryError(f"too many redirects for blob {digest}")
 
     def _paged(self, repository, first, field, what):
@@ -239,14 +391,15 @@ class RegistryClient:
                 raise RegistryError(f"listing {what} did not end after {len(seen)} pages")
             seen.add(url)
             path = urllib.parse.urlsplit(url)
+            if "/v2/" not in path.path:
+                raise RegistryError(f"listing {what} was sent a next page that is not under /v2/")
             path = path.path.split("/v2/", 1)[1] + (f"?{path.query}" if path.query else "")  # onto Registry URL's base
             response = self._send(repository, "pull", "GET", path)
             if response.status == 404 and repository is not None and not out:
                 return None  # no such repository
             self._expect(response, f"list {what}", 200)
-            out += json.loads(response.read()).get(field) or []
-            match = re.search(r'<([^>]+)>\s*;\s*rel="?next"?', response.headers.get("Link", ""))
-            url = urllib.parse.urljoin(url, match.group(1)) if match else None
+            out += json.loads(read_limited(response, CONTROL_LIMIT, f"list {what}")).get(field) or []
+            url = next_link(response.headers.get("Link", ""), url)
         return out
 
     def catalog(self):
@@ -272,10 +425,11 @@ class RegistryClient:
         query = f"?mount={urllib.parse.quote(digest)}&from={urllib.parse.quote(mount_from)}" if mount_from else ""
         response = self._send(repository, "pull,push", "POST", f"{repository}/blobs/uploads/{query}",
                               {"Content-Length": "0"}, b"", mount_from)
-        response.read()
         if mount_from and response.status == 201:
+            read_limited(response, CONTROL_LIMIT, f"mount into {repository}")
             return None
         self._expect(response, f"start upload to {repository}", 202)
+        read_limited(response, CONTROL_LIMIT, f"start upload to {repository}")
         return self._upload_location(response, repository)
 
     def upload_blob(self, repository, digest, stream, size, upload=None):
@@ -283,22 +437,20 @@ class RegistryClient:
         upload = upload or self.start_upload(repository)
         url = upload + ("&" if "?" in upload else "?") + "digest=" + urllib.parse.quote(digest)
         headers = {"Content-Type": "application/octet-stream", "Content-Length": str(size)}
-        target = urllib.parse.urlsplit(upload)
-        if target.scheme not in ("http", "https"):
-            raise RegistryError(f"upload location {upload} refused")
-        if target.netloc == self.host and target.scheme == self.scheme:
+        same = self._guard(upload, f"the upload location for {digest}")
+        if same:
             headers = self._with_auth((repository, "pull,push", None), headers)
-        response = self._open("PUT", url, headers, stream if size else b"")
-        response.read()
+        response = self._open("PUT", url, headers, stream if size else b"", foreign=not same)
         if response.status == 401:
             self.auth.pop((repository, "pull,push", None), None)  # expired mid-upload: the next attempt authorizes again
         self._expect(response, f"upload blob {digest} to {repository}", 201, 204)
+        read_limited(response, CONTROL_LIMIT, f"upload blob {digest} to {repository}")
 
     def put_manifest(self, repository, reference, manifest, media_type):
         response = self._send(repository, "pull,push", "PUT", f"{repository}/manifests/{reference}",
                               {"Content-Type": media_type}, manifest)
-        response.read()
         self._expect(response, f"push manifest {repository}:{reference}", 201, 200)
+        read_limited(response, CONTROL_LIMIT, f"push manifest {repository}:{reference}")
 
 
 class _Hashing(io.RawIOBase):
@@ -329,7 +481,8 @@ def _manifest_type(raw, fallback=None):
 
 
 def _blobs_of(manifest):
-    """config and layer digests with sizes; a foreign layer (with urls) is not copied."""
+    """config and layer digests with sizes. Only a foreign layer, which Docker and OCI mark by media type and
+    serve from its urls, is not copied; urls on any other layer are optional alternative locations."""
     out = {}
     for descriptor in [manifest.get("config")] + list(manifest.get("layers") or []):
         if not descriptor:
@@ -337,9 +490,23 @@ def _blobs_of(manifest):
         digest = descriptor.get("digest", "")
         if not DIGEST.fullmatch(digest) or "size" not in descriptor:
             raise RegistryError(f"unsupported descriptor {descriptor}")
-        if not descriptor.get("urls"):
+        if not (descriptor.get("urls") and descriptor.get("mediaType") in FOREIGN_LAYERS):
             out[digest] = int(descriptor["size"])
     return out
+
+
+def export_summary(path):
+    """(sha256 hex of the tar, ["target:tag@digest", ...]) for a tar write_export finished."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for chunk in iter(lambda: stream.read(CHUNK), b""):
+            digest.update(chunk)
+    with tarfile.open(path, "r:") as tar:
+        member = next((m for m in tar if (m.name[2:] if m.name.startswith("./") else m.name) == INDEX), None)
+        if member is None or not member.isfile() or member.size > 64 * 1024 * 1024:
+            raise RegistryError(f"{path} has no usable {INDEX}")
+        images = json.loads(tar.extractfile(member).read())["images"]
+    return digest.hexdigest(), [f"{i['target']}:{i['tag']}@{i['digest']}" for i in images]
 
 
 def read_export(path):
@@ -369,22 +536,31 @@ def read_export(path):
                 raise RegistryError(f"{entry['target']}:{entry['tag']} does not match its recorded digest")
             root_json = json.loads(root)
             children, blobs = [], {}
-            manifests = [(root, root_json)]
-            if "manifests" in root_json:
-                manifests = []
-                for child in root_json["manifests"]:
+            manifests = []
+
+            def descend(data, depth):
+                """Image manifests are collected; every manifest below an index is a child, deepest first."""
+                if "manifests" not in data:
+                    manifests.append(data)
+                    return
+                if depth >= MAX_INDEX_DEPTH:
+                    raise RegistryError(f"{entry['target']}:{entry['tag']}: indexes nested deeper than {MAX_INDEX_DEPTH}")
+                for child in data["manifests"]:
                     digest = child.get("digest", "")
                     if not DIGEST.fullmatch(digest):
                         raise RegistryError(f"{entry['target']}:{entry['tag']}: unsupported child digest {digest}")
                     name = f"{entry['dir']}/{digest[7:]}.manifest.json"
-                    if name not in members:
-                        continue  # a platform the export left out
+                    if name not in members or any(d == digest for d, *_ in children):
+                        continue  # a platform the export left out, or one already read
                     raw = read(name)
                     if "sha256:" + sha256_hex(raw) != digest:
                         raise RegistryError(f"{name} does not match its digest in the index")
+                    parsed = json.loads(raw)
+                    descend(parsed, depth + 1)
                     children.append((digest, raw, _manifest_type(raw, child.get("mediaType"))))
-                    manifests.append((raw, json.loads(raw)))
-            for _raw, manifest in manifests:
+
+            descend(root_json, 0)
+            for manifest in manifests:
                 for digest in _blobs_of(manifest):
                     name = f"{entry['dir']}/{digest[7:]}"
                     if name in members:
@@ -402,11 +578,17 @@ def push_export(client, path, rewrite=None, strip=False, move_tags=False, log=No
     """Push every image of an export tar. Every check runs before the first upload, so a refusal pushes
     nothing. Returns (pushed, present, lines)."""
     images = read_export(path)
-    plan, present, lines = [], 0, []
+    plan, present, lines, final = [], 0, [], {}
     for entry, root, media_type, children, blobs in images:
         repository = rebase(entry["target"], rewrite, strip)
-        current = client.manifest_digest(repository, entry["tag"])
         lines.append(f"{repository}:{entry['tag']}@{entry['digest']}")
+        earlier = final.setdefault((repository, entry["tag"]), entry["digest"])
+        if earlier != entry["digest"]:
+            raise RegistryError(f"{repository}:{entry['tag']} is {earlier} and {entry['digest']} in the tar; "
+                                "two images cannot end at one tag, so nothing is pushed")
+        if any(p[0] == repository and p[1]["tag"] == entry["tag"] for p in plan):
+            continue  # the same image listed again
+        current = client.manifest_digest(repository, entry["tag"])
         if current == entry["digest"]:
             present += 1
         elif current and not move_tags:
@@ -456,20 +638,28 @@ def push_export(client, path, rewrite=None, strip=False, move_tags=False, log=No
 
 
 def plan_image(client, repository, digest):
-    """(root bytes, {child digest: bytes}, {blob digest: size}) with every blob confirmed present."""
+    """(root bytes, {descendant manifest digest: bytes}, {blob digest: size}) with every blob confirmed present.
+    Manifests below an index come deepest first, so each can be pushed before the index that names it."""
     root, _ = client.get_manifest(repository, digest)
-    data = json.loads(root)
     children, blobs = {}, {}
-    if "manifests" in data:
+
+    def descend(data, depth):
+        if "manifests" not in data:
+            blobs.update(_blobs_of(data))
+            return
+        if depth >= MAX_INDEX_DEPTH:
+            raise RegistryError(f"{repository}@{digest}: indexes nested deeper than {MAX_INDEX_DEPTH}")
         for child in data["manifests"]:
             child_digest = child.get("digest", "")
             if not DIGEST.fullmatch(child_digest):
                 raise RegistryError(f"unsupported child digest {child_digest}")
+            if child_digest in children:
+                continue
             raw, _ = client.get_manifest(repository, child_digest)
+            descend(json.loads(raw), depth + 1)
             children[child_digest] = raw
-            blobs.update(_blobs_of(json.loads(raw)))
-    else:
-        blobs.update(_blobs_of(data))
+
+    descend(json.loads(root), 0)
     for blob in blobs:
         if not client.blob_exists(repository, blob):
             raise RegistryError(f"blob {blob} is missing")

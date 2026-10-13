@@ -7,7 +7,8 @@ from nifiapi.flowfiletransform import FlowFileTransform, FlowFileTransformResult
 from nifiapi.properties import ExpressionLanguageScope, PropertyDescriptor, StandardValidators
 from nifiapi.relationship import Relationship
 
-from container_registry_client import RegistryClient, push_export
+from nifi_attributes import Attributes, evaluate
+from container_registry_client import RegistryClient, RegistryError, push_export
 
 
 @use_case(description="Push container images that arrived through a data diode into the high-side registry.",
@@ -34,6 +35,10 @@ class PushContainerImages(FlowFileTransform):
     PASSWORD = PropertyDescriptor(name="Password", description="Registry password or token.", sensitive=True)
     CA_FILE = PropertyDescriptor(name="CA Certificate File", description="A PEM file of CA certificates trusted in addition to the system store "
                     "and SSL_CERT_FILE.", expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
+    TRUSTED = PropertyDescriptor(name="Trusted Storage Hosts", description="Comma separated host names, addresses or CIDR ranges "
+                    "(10.0.0.0/8) that the registry may redirect blob downloads and uploads to although they are not public "
+                    "addresses, such as an on-premises MinIO. Anything else the registry names that is loopback, link-local, "
+                    "private or plain http from an https registry is refused. The registry's own host is always allowed at the addresses its name resolves to.")
     TAR_FILE = PropertyDescriptor(name="Tar File", description="Path of the export tar on local disk, such as /data/in/${filename} after PutFile. "
                      "Empty: the FlowFile content, which NiFi hands to Python in memory, so keep that for small tars.",
                      expression_language_scope=ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
@@ -49,7 +54,7 @@ class PushContainerImages(FlowFileTransform):
     TIMEOUT = PropertyDescriptor(name="Request Timeout", description="Seconds a registry read or write may stall.", required=True,
                     default_value="600", validators=[StandardValidators.POSITIVE_INTEGER_VALIDATOR])
 
-    PROPERTIES = [REGISTRY_URL, USERNAME, PASSWORD, CA_FILE, TAR_FILE, DELETE_TAR, REWRITE, STRIP, MOVE_TAGS, TIMEOUT]
+    PROPERTIES = [REGISTRY_URL, USERNAME, PASSWORD, CA_FILE, TRUSTED, TAR_FILE, DELETE_TAR, REWRITE, STRIP, MOVE_TAGS, TIMEOUT]
 
     def __init__(self, **kwargs):
         super().__init__()
@@ -63,7 +68,9 @@ class PushContainerImages(FlowFileTransform):
         return self.PROPERTIES
 
     def _value(self, context, descriptor, flowfile):
-        value = context.getProperty(descriptor).evaluateAttributeExpressions(flowfile).getValue()
+        # Username and CA Certificate File are ENVIRONMENT scoped: environment variables, not the FlowFile
+        scope = Attributes() if descriptor in (self.USERNAME, self.CA_FILE) else flowfile
+        value = evaluate(context.getProperty(descriptor), scope)
         return value.strip() if value else None
 
     def transform(self, context, flowfile):
@@ -75,11 +82,15 @@ class PushContainerImages(FlowFileTransform):
                                     self._value(context, self.USERNAME, flowfile),
                                     context.getProperty(self.PASSWORD).getValue(),
                                     self._value(context, self.CA_FILE, flowfile),
-                                    int(context.getProperty(self.TIMEOUT).getValue()))
+                                    int(context.getProperty(self.TIMEOUT).getValue()),
+                                    self._value(context, self.TRUSTED, flowfile))
             if delete:
                 # Renamed for the push, so a second task given the same path fails instead of racing on it.
-                claimed = f"{path}.pushing-{uuid.uuid4().hex}"
-                os.rename(path, claimed)
+                if not os.path.isfile(path):
+                    raise RegistryError(f"Tar File {path} does not exist")
+                claim = f"{path}.pushing-{uuid.uuid4().hex}"
+                os.rename(path, claim)
+                claimed = claim  # only once the tar is really moved, so a failure does not try to move it back
             elif not path:
                 handle, temporary = tempfile.mkstemp(suffix=".tar")
                 with os.fdopen(handle, "wb") as out:
