@@ -37,11 +37,11 @@ class Discovery(unittest.TestCase):
 
     def test_pull(self):
         self.assertIn("Output Directory", self.properties("PullContainerImages"))
-        self.assertEqual(len(self.properties("PullContainerImages")), 19)
+        self.assertEqual(len(self.properties("PullContainerImages")), 20)
 
     def test_push(self):
         self.assertIn("Tar File", self.properties("PushContainerImages"))
-        self.assertEqual(len(self.properties("PushContainerImages")), 10)
+        self.assertEqual(len(self.properties("PushContainerImages")), 11)
 
 
 if __name__ == "__main__":
