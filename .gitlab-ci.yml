@@ -1,4 +1,18 @@
 ---
+stages: [build, test, scan]
+
+include:
+  - project: 'infra/gitlab-ci-templates'
+    ref: '1.7.1'
+    file: '/templates/quality-sonarqube/template.yml'
+    inputs:
+      instance: nifi-registry-processors
+      stage: scan
+      sarif-report-jobs: [{ job: 'build', artifacts: true }, { job: 'python-test', artifacts: true }]
+      sources: 'python/container_registry,nifi-container-registry-processors/src/main'
+      exclusions: '**/target/**,.ci-tpl/**,.ci-artifacts/**'
+      extra-properties: 'sonar.tests=python/tests,nifi-container-registry-processors/src/test;sonar.python.version=3.12;sonar.python.coverage.reportPaths=coverage.xml;sonar.java.binaries=nifi-container-registry-processors/target/classes;sonar.java.test.binaries=nifi-container-registry-processors/target/test-classes;sonar.java.libraries=nifi-container-registry-processors/target/classes'
+
 variables:
   # Any image with Java 21. One without mvn downloads Maven MAVEN_VERSION and checks it against MAVEN_SHA512.
   MAVEN_IMAGE: 'docker.io/library/maven@sha256:6fdc855a6ed81d288ca7ca37ac6ff5e9308b612485c0801d70b25a858c83d237'
@@ -6,6 +20,10 @@ variables:
   MAVEN_SHA512: 'bcfe4fe305c962ace56ac7b5fc7a08b87d5abd8b7e89027ab251069faebee516b0ded8961445d6d91ec1985dfe30f8153268843c89aa392733d1a3ec956c9978'
 
 build:
+  stage: build
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
   image: $MAVEN_IMAGE
   script:
     - |
@@ -16,5 +34,25 @@ build:
       fi
     - mvn -B -ntp package
   artifacts:
-    paths: [nifi-container-registry-nar/target/*.nar]
+    paths:
+      - nifi-container-registry-nar/target/*.nar
+      - nifi-container-registry-processors/target/classes
+      - nifi-container-registry-processors/target/test-classes
     expire_in: 30 days
+
+python-test:
+  stage: test
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  # A Python 3.12 image from the runner's allowed registry, set as a project CI variable.
+  image: $PYTHON_TEST_IMAGE
+  script:
+    - pip install --no-cache-dir coverage
+    - coverage run --source=python/container_registry -m unittest discover -s python/tests
+    - coverage xml -o coverage.xml
+    - coverage report
+  coverage: '/^TOTAL.*\s(\d+(?:\.\d+)?)%$/'
+  artifacts:
+    paths: [coverage.xml]
+    expire_in: 7 days
