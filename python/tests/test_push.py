@@ -1,6 +1,7 @@
 """PushContainerImages.transform with the NiFi API stood in."""
 import os
 import tempfile
+import types
 import unittest
 
 import nifi_stub
@@ -15,6 +16,13 @@ class FlowFile:
 
     def getAttributes(self):
         return nifi_stub.JavaMap()
+
+
+def ssl_service(ders):
+    """An SSLContextProvider whose truststore holds certificates with these DER encodings."""
+    certs = [types.SimpleNamespace(getEncoded=lambda der=der: der) for der in ders]
+    manager = types.SimpleNamespace(getAcceptedIssuers=lambda: certs)
+    return types.SimpleNamespace(createTrustManager=lambda: manager)
 
 
 def make_push(**values):
@@ -37,30 +45,27 @@ class MissingTar(unittest.TestCase):
 
 
 class EnvironmentScope(unittest.TestCase):
-    def test_username_and_ca_file_come_from_the_environment(self):
+    def test_username_comes_from_the_environment_and_the_ssl_service_becomes_der(self):
         os.environ["TEST_PUSH_USER"] = "robot"
-        os.environ["TEST_PUSH_CA"] = "/etc/ca.pem"
         self.addCleanup(os.environ.pop, "TEST_PUSH_USER")
-        self.addCleanup(os.environ.pop, "TEST_PUSH_CA")
         seen = []
         original = push_module.RegistryClient
         push_module.RegistryClient = lambda *args: seen.append(args) or (_ for _ in ()).throw(RuntimeError("stop"))
         self.addCleanup(setattr, push_module, "RegistryClient", original)
-        processor, context = make_push(**{"Username": "${TEST_PUSH_USER}", "CA Certificate File": "${TEST_PUSH_CA}",
+        processor, context = make_push(**{"Username": "${TEST_PUSH_USER}", "SSL Context Service": "ssl",
                                           "Tar File": "/nonexistent.tar"})
+        context.services["SSL Context Service"] = ssl_service([b"der-one"])
         processor.transform(context, FlowFile())
-        self.assertEqual((seen[0][1], seen[0][3]), ("robot", "/etc/ca.pem"))
+        self.assertEqual((seen[0][1], seen[0][3]), ("robot", [b"der-one"]))
 
-    def test_text_after_a_reference_is_kept(self):
-        os.environ["TEST_PUSH_CA"] = "/etc"
-        self.addCleanup(os.environ.pop, "TEST_PUSH_CA")
+    def test_no_ssl_service_means_no_extra_ca(self):
         seen = []
         original = push_module.RegistryClient
         push_module.RegistryClient = lambda *args: seen.append(args) or (_ for _ in ()).throw(RuntimeError("stop"))
         self.addCleanup(setattr, push_module, "RegistryClient", original)
-        processor, context = make_push(**{"CA Certificate File": "${TEST_PUSH_CA}/ca.pem", "Tar File": "/nonexistent.tar"})
+        processor, context = make_push(**{"Tar File": "/nonexistent.tar"})
         processor.transform(context, FlowFile())
-        self.assertEqual(seen[0][3], "/etc/ca.pem")
+        self.assertEqual(seen[0][3], [])
 
 
 if __name__ == "__main__":

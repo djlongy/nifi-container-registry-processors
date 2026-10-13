@@ -101,6 +101,22 @@ A tar from `mirror.py send --flowfile` (a `.tar.ffv3` on a share or bucket) need
 
 A FlowFile whose content lists `team/app:1.0` or `team/app@sha256:...`, one per line, makes PullContainerImages export those on demand, without touching its state.
 
+## Python processors 2.0.0
+
+`python/container_registry/` holds the same two processors in Python, plus ExportContainerImages (README there). Versus 1.4.0:
+
+| Change | Detail |
+|---|---|
+| SSL Context Service | Replaces **CA Certificate File** on Pull and Push (breaking). Its truststore CAs are trusted in addition to the system store. Migrate by setting the service and clearing the old property |
+| ExportContainerImages | Takes the gitlab-registry-mirror webhook and writes one export tar. Properties: Registry URL, Username, Password, SSL Context Service, Trusted Storage Hosts, **Repositories** (allowlist, `team/*` prefix), Output Directory, Filename Prefix, Artifact Type, Max Export Size, Request Timeout |
+
+```text
+ListenHTTP -> RouteOnAttribute ${X-Artifact-Type:equals('container-images-request')}
+  -> ExportContainerImages -> PushContainerImages (Tar File /data/out/${filename})
+```
+
+A webhook whose `X-Sha256` does not match its body, whose registry host, repositories or digests do not check out, fails with `registry.error` and exports nothing.
+
 ## Behaviour
 
 - Both read and write the mirror.py export layout: `export.json` plus one `skopeo dir:` copy per image, shared blobs stored once as hard links. `mirror.py import` takes a tar PullContainerImages wrote, and PushContainerImages takes one `mirror.py export` wrote.
