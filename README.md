@@ -13,7 +13,7 @@ NiFi processors that export container images from a registry into a tar and push
 Each tag `v<version>` publishes the NAR and its `.sha256` as a GitHub release:
 
 ```sh
-V=1.1.0
+V=1.2.0
 curl -fLO https://github.com/djlongy/nifi-container-registry-processors/releases/download/v$V/nifi-container-registry-nar-$V.nar
 curl -fLO https://github.com/djlongy/nifi-container-registry-processors/releases/download/v$V/nifi-container-registry-nar-$V.nar.sha256
 sha256sum -c nifi-container-registry-nar-$V.nar.sha256
@@ -25,7 +25,7 @@ To release, set the version in the three `pom.xml` files, merge, and push the ta
 
 ```sh
 docker run --rm -v "$PWD":/src -w /src maven:3.9.11-eclipse-temurin-21 mvn -B package
-# nifi-container-registry-nar/target/nifi-container-registry-nar-1.1.0.nar
+# nifi-container-registry-nar/target/nifi-container-registry-nar-1.2.0.nar
 ```
 
 On RHEL with SELinux and rootless podman, label the mounts with `:Z`, and give Maven the proxy itself (it ignores `HTTPS_PROXY`), or point `~/.m2/settings.xml` at an internal Maven mirror (`<mirror><mirrorOf>*</mirrorOf><url>https://repo.example.internal/maven</url></mirror>`):
@@ -54,10 +54,10 @@ A change to this layout is a new major version.
 
 ## Install
 
-Copy the NAR into the directory `nifi.nar.library.autoload.directory` names in `nifi.properties` (`./extensions` when unset) on **every** node. NiFi loads it within a minute, no restart. On Kubernetes that directory is in the container's own filesystem, so a pod restart drops the NAR: bake it into the image (`COPY nifi-container-registry-nar-1.1.0.nar /opt/nifi/nifi-current/extensions/`) or mount a volume there. A newer version sits beside the old one; pick it per processor (**Change Version**), and remove the old file once nothing uses it.
+Copy the NAR into the directory `nifi.nar.library.autoload.directory` names in `nifi.properties` (`./extensions` when unset) on **every** node. NiFi loads it within a minute, no restart. On Kubernetes that directory is in the container's own filesystem, so a pod restart drops the NAR: bake it into the image (`COPY nifi-container-registry-nar-1.2.0.nar /opt/nifi/nifi-current/extensions/`) or mount a volume there. A newer version sits beside the old one; pick it per processor (**Change Version**), and remove the old file once nothing uses it.
 
 ```sh
-kubectl -n <namespace> cp nifi-container-registry-nar-1.1.0.nar <pod>:/opt/nifi/nifi-current/extensions/   # each node
+kubectl -n <namespace> cp nifi-container-registry-nar-1.2.0.nar <pod>:/opt/nifi/nifi-current/extensions/   # each node
 ```
 
 ## Properties
@@ -75,24 +75,27 @@ The full set, with descriptions, is in each processor's **Usage** page in NiFi a
 | Pull | Tag Filter | `(?!sha256-).+` | Skips signature and attestation tags |
 | Pull | Initial Run | `Export All` | With empty state: export everything, or `Record Only` to baseline and export only later changes |
 | Pull | Max Export Size | one tar | Split into tars that are each complete; an image over the cap goes alone |
+| Pull | *(dynamic)* | none | Each added property becomes an attribute on every tar, Expression Language over the tar's attributes |
 
 ## Usage
 
-Low side, scheduled on the **primary node** (other nodes skip scheduled runs):
+Low side, scheduled on the **primary node** (other nodes skip scheduled runs). Each tar leaves as a plain FlowFile already carrying its attributes; add your own, for example the diode's, as dynamic properties (**+** on the Properties tab, Expression Language allowed):
 
 ```text
-PullContainerImages (Registry URL https://quay.low.example.internal, Repositories team/*, Run Schedule 15 min)
-  success -> UpdateAttribute (your diode attributes) -> the diode
+PullContainerImages (Registry URL https://quay.low.example.internal, Repositories team/*, Run Schedule 15 min,
+                     + diode.route = container-images)
+  success -> the diode (which carries FlowFile attributes across)
 ```
 
-High side, after the diode has reassembled the file:
+High side, as the diode delivers the FlowFile:
 
 ```text
-RouteOnAttribute ${filename:matches('container-images-.*\.tar(\.ffv3)?')}
-  -> UnpackContent (flowfile-stream-v3, only for a .ffv3)
+RouteOnAttribute ${X-Artifact-Type:equals('container-images')}
   -> PushContainerImages (Registry URL https://registry.high.example.internal, Username, Password)
      success -> done      failure -> a stopped processor, to inspect registry.error
 ```
+
+A tar from `mirror.py send --flowfile` (a `.tar.ffv3` on a share or bucket) needs UnpackContent (`flowfile-stream-v3`) before PushContainerImages; a NiFi-to-NiFi path needs no packaging.
 
 A FlowFile whose content lists `team/app:1.0` or `team/app@sha256:...`, one per line, makes PullContainerImages export those on demand, without touching its state.
 
