@@ -60,7 +60,7 @@ A FlowFile out of Push still holds the tar. Auto-terminate `success`, or give it
 
 ## Behaviour
 
-- Pull keeps `repository:tag -> digest` (16 hex characters of it) in one compressed cluster-state value, pruned to what the source still lists, about 30 bytes a tag against the roughly 1 MB ZooKeeper allows. Past 900 KB the run fails and says to narrow Repositories. It is and writes it only after the tar is complete. The tar is written as a hidden `.<name>.partial` and renamed when done. A failed run leaves no tar and no state change.
+- Pull keeps `repository:tag -> digest` (16 hex characters of it) in one compressed cluster-state value, pruned to what the source still lists, about 30 bytes a tag against the roughly 1 MB ZooKeeper allows. Past 900 KB the run fails and says to narrow Repositories. The state is written only after the tar is complete. The tar is written as a hidden `.<name>.partial` and renamed when done. A failed run leaves no tar and no state change.
 - One tar per run. With Max Export Size, the images left over go on the next run.
 - Pull's FlowFile has no content. Its attributes: `filename`, `Filename`, `absolute.path`, `Content-Type`, `X-Sha256`, `X-Artifact-Type`, `X-Artifact-Format`, `registry.host`, `registry.images`, `file.size`, and the dynamic properties.
 - Blobs stream between registry and disk in 8 MiB chunks and are checked against their digests. Memory stays flat whatever the image size.
