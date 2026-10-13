@@ -283,7 +283,9 @@ public class PushContainerImages extends AbstractProcessor {
                 upload(registry, targets.get(0), digest, tar, size);
             } else {
                 // Needed in several repositories: keep a copy, send it once, then mount it (or send it again).
-                Path copy = Files.createTempFile("container-images-", ".blob");
+                Path copy = Files.createTempFile("container-images-", ".blob",
+                        java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
+                                java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")));
                 try {
                     try (DigestCheck check = new DigestCheck(tar, digest)) {
                         Files.copy(check, copy, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
