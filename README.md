@@ -2,6 +2,8 @@
 
 NiFi processors that export container images from a registry into a tar and push such a tar into a registry, digests unchanged, with no skopeo or docker on the NiFi host. The tar is the export format of mirror.py (djlongy/gitlab-registry-mirror), so either side can be NiFi or mirror.py.
 
+The same two processors ship as plain Python source, with no build and no dependencies, in `python/container_registry/` (see its README).
+
 ## Requirements
 
 - Apache NiFi 2.x. The NAR is built against NiFi 2.11.0 (`nifi-api` 2.10.0); for another 2.x release set `nifi.version` and `nifi.api.version` in `pom.xml` to what its `lib/` holds.
