@@ -8,7 +8,7 @@ from nifiapi.properties import ExpressionLanguageScope, PropertyDescriptor, Stan
 from nifiapi.relationship import Relationship
 
 from nifi_attributes import Attributes, evaluate
-from container_registry_client import RegistryClient, RegistryError, push_export
+from container_registry_client import RegistryClient, RegistryError, push_export, trusted_der
 
 
 @use_case(description="Push container images that arrived through a data diode into the high-side registry.",
@@ -20,7 +20,7 @@ class PushContainerImages(FlowFileTransform):
         implements = ["org.apache.nifi.python.processor.FlowFileTransform"]
 
     class ProcessorDetails:
-        version = "1.4.0"
+        version = "2.0.0"
         description = ("Pushes every image of a mirror.py export tar to an OCI registry. The tar is read from Tar "
                        "File, or from the FlowFile content when Tar File is empty. Every target tag is checked "
                        "before the first upload, so a refusal pushes nothing.")
@@ -33,8 +33,8 @@ class PushContainerImages(FlowFileTransform):
     USERNAME = PropertyDescriptor(name="Username", description="Registry user. Empty: anonymous.",
                      expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
     PASSWORD = PropertyDescriptor(name="Password", description="Registry password or token.", sensitive=True)
-    CA_FILE = PropertyDescriptor(name="CA Certificate File", description="A PEM file of CA certificates trusted in addition to the system store "
-                    "and SSL_CERT_FILE.", expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
+    SSL_CONTEXT = PropertyDescriptor(name="SSL Context Service", description="The truststore whose CAs are trusted in addition to the system "
+                    "store and SSL_CERT_FILE.", controller_service_definition="org.apache.nifi.ssl.SSLContextProvider")
     TRUSTED = PropertyDescriptor(name="Trusted Storage Hosts", description="Comma separated host names, addresses or CIDR ranges "
                     "(10.0.0.0/8) that the registry may redirect blob downloads and uploads to although they are not public "
                     "addresses, such as an on-premises MinIO. Anything else the registry names that is loopback, link-local, "
@@ -54,7 +54,7 @@ class PushContainerImages(FlowFileTransform):
     TIMEOUT = PropertyDescriptor(name="Request Timeout", description="Seconds a registry read or write may stall.", required=True,
                     default_value="600", validators=[StandardValidators.POSITIVE_INTEGER_VALIDATOR])
 
-    PROPERTIES = [REGISTRY_URL, USERNAME, PASSWORD, CA_FILE, TRUSTED, TAR_FILE, DELETE_TAR, REWRITE, STRIP, MOVE_TAGS, TIMEOUT]
+    PROPERTIES = [REGISTRY_URL, USERNAME, PASSWORD, SSL_CONTEXT, TRUSTED, TAR_FILE, DELETE_TAR, REWRITE, STRIP, MOVE_TAGS, TIMEOUT]
 
     def __init__(self, **kwargs):
         super().__init__()
@@ -68,8 +68,8 @@ class PushContainerImages(FlowFileTransform):
         return self.PROPERTIES
 
     def _value(self, context, descriptor, flowfile):
-        # Username and CA Certificate File are ENVIRONMENT scoped: environment variables, not the FlowFile
-        scope = Attributes() if descriptor in (self.USERNAME, self.CA_FILE) else flowfile
+        # Username is ENVIRONMENT scoped: environment variables, not the FlowFile
+        scope = Attributes() if descriptor in (self.USERNAME,) else flowfile
         value = evaluate(context.getProperty(descriptor), scope)
         return value.strip() if value else None
 
@@ -81,7 +81,7 @@ class PushContainerImages(FlowFileTransform):
             client = RegistryClient(self._value(context, self.REGISTRY_URL, flowfile),
                                     self._value(context, self.USERNAME, flowfile),
                                     context.getProperty(self.PASSWORD).getValue(),
-                                    self._value(context, self.CA_FILE, flowfile),
+                                    trusted_der(context.getProperty(self.SSL_CONTEXT)),
                                     int(context.getProperty(self.TIMEOUT).getValue()),
                                     self._value(context, self.TRUSTED, flowfile))
             if delete:

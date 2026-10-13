@@ -16,15 +16,17 @@ class BoundedReads(unittest.TestCase):
     """A registry cannot make the client hold more than a small response, whatever it sends."""
     def test_an_error_body_is_read_only_as_far_as_the_message(self):
         with serve(lambda h, s: stream(h, s, 128 * MiB, status=500)) as (url, seen):
+            raising = c.RegistryClient(url)
             with self.assertRaises(c.RegistryError) as raised:
-                c.RegistryClient(url).open_blob("team/app", DIGEST)
+                raising.open_blob("team/app", DIGEST)
         self.assertLess(len(str(raised.exception)), 1000)
         self.assertLess(seen.sent, 32 * MiB, "the whole error body was read")
 
     def test_a_manifest_over_the_cap_is_refused_while_it_is_read(self):
         with serve(lambda h, s: stream(h, s, 64 * MiB)) as (url, seen):
+            raising = c.RegistryClient(url)
             with self.assertRaises(c.RegistryError):
-                c.RegistryClient(url).get_manifest("team/app", DIGEST)
+                raising.get_manifest("team/app", DIGEST)
         self.assertLess(seen.sent, 32 * MiB)
 
     def test_a_token_answer_over_the_cap_is_refused(self):
@@ -35,14 +37,16 @@ class BoundedReads(unittest.TestCase):
                 reply(handler, 401, headers={"WWW-Authenticate": f'Bearer realm="{base[0]}/token"'})
         with serve(respond) as (url, seen):
             base = [url]
+            raising = c.RegistryClient(url)
             with self.assertRaises(c.RegistryError):
-                c.RegistryClient(url).get_manifest("team/app", "latest")
+                raising.get_manifest("team/app", "latest")
         self.assertLess(seen.sent, 32 * MiB)
 
     def test_a_listing_over_the_cap_is_refused(self):
         with serve(lambda h, s: stream(h, s, 64 * MiB)) as (url, seen):
+            raising = c.RegistryClient(url)
             with self.assertRaises(c.RegistryError):
-                c.RegistryClient(url).tags("team/app")
+                raising.tags("team/app")
         self.assertLess(seen.sent, 32 * MiB)
 
     def test_an_upload_answer_over_the_cap_is_refused(self):
@@ -51,8 +55,9 @@ class BoundedReads(unittest.TestCase):
             stream(handler, seen, 64 * MiB, status=201) if handler.command == "PUT" else reply(handler, 202)
         with serve(respond) as (url, seen):
             client = c.RegistryClient(url)
+            body = io.BytesIO(b"abc")
             with self.assertRaises(c.RegistryError):
-                client.upload_blob("team/app", DIGEST, io.BytesIO(b"abc"), 3, upload=url + "/upload/1")
+                client.upload_blob("team/app", DIGEST, body, 3, upload=url + "/upload/1")
         self.assertLess(seen.sent, 32 * MiB)
 
 
@@ -73,8 +78,9 @@ class RegistrySuppliedUrls(unittest.TestCase):
     def test_a_blob_redirect_to_a_loopback_host_is_refused(self):
         with serve(self.storage_serves) as (storage, stored):
             with self.registry(storage) as (url, _seen):
+                raising = c.RegistryClient(url, "u", "p")
                 with self.assertRaises(c.RegistryError) as raised:
-                    c.RegistryClient(url, "u", "p").open_blob("team/app", DIGEST)
+                    raising.open_blob("team/app", DIGEST)
         self.assertIn("Trusted Storage Hosts", str(raised.exception))
         self.assertEqual(stored.requests, [], "the request reached the loopback host")
 
@@ -102,8 +108,9 @@ class RegistrySuppliedUrls(unittest.TestCase):
             with self.registry(storage) as (url, _seen):
                 client = c.RegistryClient(url, "u", "p")
                 upload = client.start_upload("team/app")
+                body = io.BytesIO(b"abc")
                 with self.assertRaises(c.RegistryError):
-                    client.upload_blob("team/app", DIGEST, io.BytesIO(b"abc"), 3, upload)
+                    client.upload_blob("team/app", DIGEST, body, 3, upload)
         self.assertEqual(stored.requests, [], "the blob was sent to the loopback host")
 
     def test_a_trusted_upload_location_gets_the_blob_without_credentials(self):
@@ -127,8 +134,9 @@ class RegistrySuppliedUrls(unittest.TestCase):
     def test_an_https_registry_cannot_send_an_upload_to_plain_http(self):
         client = c.RegistryClient("https://registry.example.internal", "u", "p", trusted_hosts="0.0.0.0/0")
         client._open = mock.Mock()
+        body = io.BytesIO(b"abc")
         with self.assertRaises(c.RegistryError):
-            client.upload_blob("team/app", DIGEST, io.BytesIO(b"abc"), 3, "http://storage.example.internal/up/1")
+            client.upload_blob("team/app", DIGEST, body, 3, "http://storage.example.internal/up/1")
         self.assertEqual(client._open.call_count, 0)
 
     def test_other_schemes_are_refused(self):
@@ -162,8 +170,9 @@ class SecretsStayOutOfMessages(unittest.TestCase):
         def respond(handler, seen):
             reply(handler, 307, headers={"Location": f"http://nobody:{self.PASSWORD}@127.0.0.1:1/blob?sig={self.SIGNATURE}"})
         with serve(respond) as (url, _seen):
+            raising = c.RegistryClient(url, trusted_hosts="127.0.0.1")
             with self.assertRaises(c.RegistryError) as raised:
-                c.RegistryClient(url, trusted_hosts="127.0.0.1").open_blob("team/app", DIGEST)
+                raising.open_blob("team/app", DIGEST)
         message = str(raised.exception)
         self.assertIn("127.0.0.1:1/blob", message)
         for secret in (self.PASSWORD, self.SIGNATURE):
@@ -298,8 +307,9 @@ class Rebinding(unittest.TestCase):
         client = c.RegistryClient(f"http://rebind.test:{self.port}", "robot", self.CANARY)
         client.blob_exists("t/a", DIGEST)
         self.rebound = True
+        body = io.BytesIO(b"blob")
         with self.assertRaises(c.RegistryError):
-            client.upload_blob("t/a", DIGEST, io.BytesIO(b"blob"), 4, f"http://rebind.test:{self.port}/v2/t/a/blobs/uploads/1")
+            client.upload_blob("t/a", DIGEST, body, 4, f"http://rebind.test:{self.port}/v2/t/a/blobs/uploads/1")
         self.assertEqual(self.hits, [])
 
     def test_the_pinned_address_is_used_again_without_trouble(self):
@@ -327,8 +337,9 @@ class Rebinding(unittest.TestCase):
         client.blob_exists("t/a", DIGEST)
         client.auth[("t/a", "pull,push", None)] = "Basic " + self.CANARY
         self.rebound = True
+        body = io.BytesIO(b"blob")
         with self.assertRaises(c.RegistryError):  # the other server answers 200, not 201
-            client.upload_blob("t/a", DIGEST, io.BytesIO(b"blob"), 4, f"http://rebind.test:{self.port}/v2/t/a/blobs/uploads/1")
+            client.upload_blob("t/a", DIGEST, body, 4, f"http://rebind.test:{self.port}/v2/t/a/blobs/uploads/1")
         self.assertEqual([hit[2] for hit in self.hits], [None])
 
 

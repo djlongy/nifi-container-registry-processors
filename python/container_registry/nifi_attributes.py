@@ -13,11 +13,13 @@ class Attributes:
     def __init__(self, values=None):
         self.values = values or {}
 
-    def getAttribute(self, name):
+    # The names mirror NiFi's Java FlowFile API.
+    def getAttribute(self, name):  # NOSONAR(S100)
         value = self.values.get(name)
         return os.environ.get(name) if value is None else value
 
-    def getAttributes(self):
+    # The names mirror NiFi's Java FlowFile API.
+    def getAttributes(self):  # NOSONAR(S100)
         java = JvmHolder.jvm.java.util.HashMap()
         for key, value in self.values.items():
             java.put(key, value)
