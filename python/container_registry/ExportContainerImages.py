@@ -6,13 +6,12 @@ from datetime import datetime, timezone
 
 from nifiapi.documentation import use_case
 from nifiapi.flowfiletransform import FlowFileTransform, FlowFileTransformResult
-from nifiapi.properties import ExpressionLanguageScope, PropertyDescriptor
+from nifiapi.properties import ExpressionLanguageScope, PropertyDescriptor, StandardValidators
 from nifiapi.relationship import Relationship
 
 from nifi_attributes import Attributes, evaluate
 from container_registry_client import (DIGEST, REPOSITORY, TAG, RegistryClient, RegistryError, export_attributes,
                                        parse_size, plan_image, trusted_der, write_export)
-from PullContainerImages import PullContainerImages as Pull
 
 
 def host_of(registry):
@@ -41,13 +40,34 @@ class ExportContainerImages(FlowFileTransform):
                        "Any other body fails the FlowFile and exports nothing.")
         tags = ["container", "image", "oci", "docker", "registry", "export", "diode", "webhook"]
 
-    REGISTRY_URL, USERNAME, PASSWORD, SSL_CONTEXT, TRUSTED = (Pull.REGISTRY_URL, Pull.USERNAME, Pull.PASSWORD,
-                                                              Pull.SSL_CONTEXT, Pull.TRUSTED)
+    REGISTRY_URL = PropertyDescriptor(name="Registry URL", description="The registry to export from: https://registry.example.internal, or "
+                         "https://<host>/artifactory/api/docker/<repo-key> for Artifactory.", required=True,
+                         validators=[StandardValidators.URL_VALIDATOR],
+                         expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
+    USERNAME = PropertyDescriptor(name="Username", description="Registry user. Empty: anonymous.",
+                     expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
+    PASSWORD = PropertyDescriptor(name="Password", description="Registry password or token.", sensitive=True)
+    SSL_CONTEXT = PropertyDescriptor(name="SSL Context Service", description="The truststore whose CAs are trusted in addition to the system "
+                    "store and SSL_CERT_FILE, for the registry and the Ledger URL.",
+                    controller_service_definition="org.apache.nifi.ssl.SSLContextProvider")
+    TRUSTED = PropertyDescriptor(name="Trusted Storage Hosts", description="Comma separated host names, addresses or CIDR ranges "
+                    "(10.0.0.0/8) that the registry may redirect blob downloads and uploads to although they are not public "
+                    "addresses, such as an on-premises MinIO. Anything else the registry names that is loopback, link-local, "
+                    "private or plain http from an https registry is refused. The registry's own host is always allowed at the addresses its name resolves to.")
     REPOSITORIES = PropertyDescriptor(name="Repositories", description="The repositories a webhook may export, separated by commas or "
                          "new lines. An entry ending in * is a prefix, such as team/*. Any other repository fails the FlowFile.",
                          required=True, expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
-    OUTPUT_DIR, PREFIX, ARTIFACT_TYPE, MAX_SIZE, TIMEOUT = (Pull.OUTPUT_DIR, Pull.PREFIX, Pull.ARTIFACT_TYPE,
-                                                            Pull.MAX_SIZE, Pull.TIMEOUT)
+    OUTPUT_DIR = PropertyDescriptor(name="Output Directory", description="Where the tar is written. It must hold the largest export.",
+                       required=True, expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
+    PREFIX = PropertyDescriptor(name="Filename Prefix", description="Start of each tar's name.", required=True, default_value="container-images-")
+    ARTIFACT_TYPE = PropertyDescriptor(name="Artifact Type", description="The X-Artifact-Type attribute.", required=True,
+                          default_value="container-images")
+    MAX_SIZE = PropertyDescriptor(name="Max Export Size", description="The most blob bytes one tar holds, such as 20 GB. The rest go in the next "
+                     "run. An image larger than this goes alone. Empty: no limit.",
+                     validators=[StandardValidators.DATA_SIZE_VALIDATOR])
+    TIMEOUT = PropertyDescriptor(name="Request Timeout", description="Seconds a registry read may stall.", required=True, default_value="600",
+                    validators=[StandardValidators.POSITIVE_INTEGER_VALIDATOR])
+
 
     PROPERTIES = [REGISTRY_URL, USERNAME, PASSWORD, SSL_CONTEXT, TRUSTED, REPOSITORIES, OUTPUT_DIR, PREFIX, ARTIFACT_TYPE,
                   MAX_SIZE, TIMEOUT]
