@@ -179,8 +179,44 @@ def rebase(target, rewrite=None, strip=False):
     return moved
 
 
+UNITS = {"B": 1, "KB": 1024, "MB": 1024 ** 2, "GB": 1024 ** 3, "TB": 1024 ** 4}
+
+
+def parse_size(value):
+    """Bytes in a size such as 20 GB; 0 for none."""
+    if not value:
+        return 0
+    match = re.fullmatch(r"([\d.]+)\s*([KMGT]?B)?", value.strip().upper())
+    if not match:
+        raise RegistryError(f"Max Export Size {value!r} is not a size such as 20 GB")
+    return int(float(match.group(1)) * UNITS[match.group(2) or "B"])
+
+
+def trusted_der(property_value):
+    """The DER bytes of every CA in the SSL Context Service property_value names, [] when it is unset.
+    py4j hands getEncoded() over as a Java byte[], which bytes() converts."""
+    if not property_value.getValue():
+        return []
+    service = property_value.asControllerService()
+    manager = service.createTrustManager()
+    if manager is None:
+        raise RegistryError("the SSL Context Service has no truststore")
+    return [bytes(issuer.getEncoded()) for issuer in manager.getAcceptedIssuers()]
+
+
+def export_attributes(directory, name, sha, host, artifact_type, images):
+    """The FlowFile attributes that name an export tar in directory: what Pull and Export both emit."""
+    return {
+        "filename": name, "Filename": name, "absolute.path": directory.rstrip("/") + "/",
+        "Content-Type": "application/octet-stream", "mime.type": "application/x-tar",
+        "X-Sha256": sha, "X-Artifact-Type": artifact_type, "X-Artifact-Format": "tar",
+        "registry.host": host, "registry.images": "\n".join(images),
+        "file.size": str(os.path.getsize(os.path.join(directory, name))),
+    }
+
+
 class RegistryClient:
-    def __init__(self, url, username=None, password=None, ca_file=None, timeout=3600, trusted_hosts=None):
+    def __init__(self, url, username=None, password=None, ca_der=(), timeout=3600, trusted_hosts=None):
         url = (url or "").rstrip("/")
         if not url.startswith(("https://", "http://")):
             raise RegistryError("Registry URL must start with https:// or http://")
@@ -194,8 +230,8 @@ class RegistryClient:
         self.password = password or ""
         self.timeout = timeout
         context = ssl.create_default_context()  # system store, and SSL_CERT_FILE when set
-        if ca_file:
-            context.load_verify_locations(cafile=ca_file)
+        for der in ca_der or ():
+            context.load_verify_locations(cadata=bytes(der))  # one DER certificate each, added to the system store
         self.pins = {}  # host name -> the addresses its first connection saw it resolve to
         self.opener = web_opener(context, self._check_pinned)
         self.trusted_names, self.trusted_nets = set(), []

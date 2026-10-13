@@ -121,6 +121,7 @@ class FakeContext:
         self.values = dict(values)
         self.dynamic = dict(dynamic or {})
         self.state = state or FakeStateManager()
+        self.services = {}   # property name -> the object asControllerService returns
 
     def getProperty(self, descriptor):
         name = descriptor.name
@@ -130,8 +131,10 @@ class FakeContext:
             string = self.dynamic[name]
         else:
             string = getattr(descriptor, "default_value", None)
-        return Value(string, getattr(descriptor, "expression_language_scope", None) is not None
-                     and descriptor.expression_language_scope != ExpressionLanguageScope.NONE)
+        value = Value(string, getattr(descriptor, "expression_language_scope", None) is not None
+                      and descriptor.expression_language_scope != ExpressionLanguageScope.NONE)
+        value.asControllerService = lambda: self.services[name]
+        return value
 
     def getProperties(self):
         return [types.SimpleNamespace(name=n, dynamic=True,
@@ -151,7 +154,7 @@ class ExpressionLanguageScope(enum.Enum):
 class PropertyDescriptor:
     def __init__(self, name, description="", required=False, sensitive=False, default_value=None,
                  allowable_values=None, validators=None, expression_language_scope=ExpressionLanguageScope.NONE,
-                 dependencies=None, dynamic=False):
+                 dependencies=None, dynamic=False, controller_service_definition=None):
         self.name, self.required, self.sensitive = name, required, sensitive
         self.default_value, self.dynamic = default_value, dynamic
         self.expression_language_scope = expression_language_scope

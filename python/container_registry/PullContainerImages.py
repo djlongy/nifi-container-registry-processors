@@ -16,8 +16,9 @@ from nifiapi.properties import ExpressionLanguageScope, PropertyDependency, Prop
 from nifiapi.relationship import Relationship
 
 from nifi_attributes import Attributes, evaluate
-from container_registry_client import (DIGEST, REPOSITORY, TAG, RegistryClient, RegistryError, export_summary,
-                                       plan_image, read_limited, rebase, web_opener, write_export)
+from container_registry_client import (DIGEST, REPOSITORY, TAG, RegistryClient, RegistryError, export_attributes,
+                                       export_summary, parse_size, plan_image, read_limited, rebase, trusted_der,
+                                       web_opener, write_export)
 
 LISTING, LEDGER, IMAGE_LIST = "Registry Listing", "Ledger", "Image List"
 STATE_KEY = "exported"   # zlib + base64 JSON {"repository:tag": first 16 hex of the digest}, in values exported.0, exported.1, ...
@@ -26,7 +27,6 @@ STATE_LIMIT = 900_000    # ZooKeeper caps a component's cluster state near 1 MB
 LEDGER_LIMIT = 64 * 1024 * 1024  # the biggest ledger.json read
 STATE_VALUE = 60_000     # and each value it stores through writeUTF at 65535 bytes
 LEFTOVER_AFTER = 3600    # seconds a finished tar may sit in Output Directory before a run emits it again
-UNITS = {"B": 1, "KB": 1024, "MB": 1024 ** 2, "GB": 1024 ** 3, "TB": 1024 ** 4}
 
 
 
@@ -87,7 +87,7 @@ class PullContainerImages(FlowFileSource):
         implements = ["org.apache.nifi.python.processor.FlowFileSource"]
 
     class ProcessorDetails:
-        version = "1.4.0"
+        version = "2.0.0"
         description = ("Exports container images from an OCI registry as a mirror.py export tar written to Output "
                        "Directory, and emits a FlowFile that names it, for FetchFile to read. Each run exports what "
                        "changed since the last export, recorded in cluster state. Schedule it on the primary node only.")
@@ -100,9 +100,9 @@ class PullContainerImages(FlowFileSource):
     USERNAME = PropertyDescriptor(name="Username", description="Registry user. Empty: anonymous.",
                      expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
     PASSWORD = PropertyDescriptor(name="Password", description="Registry password or token.", sensitive=True)
-    CA_FILE = PropertyDescriptor(name="CA Certificate File", description="A PEM file of CA certificates trusted in addition to the system store "
-                    "and SSL_CERT_FILE, for the registry and the Ledger URL.",
-                    expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
+    SSL_CONTEXT = PropertyDescriptor(name="SSL Context Service", description="The truststore whose CAs are trusted in addition to the system "
+                    "store and SSL_CERT_FILE, for the registry and the Ledger URL.",
+                    controller_service_definition="org.apache.nifi.ssl.SSLContextProvider")
     TRUSTED = PropertyDescriptor(name="Trusted Storage Hosts", description="Comma separated host names, addresses or CIDR ranges "
                     "(10.0.0.0/8) that the registry may redirect blob downloads and uploads to although they are not public "
                     "addresses, such as an on-premises MinIO. Anything else the registry names that is loopback, link-local, "
@@ -149,7 +149,7 @@ class PullContainerImages(FlowFileSource):
     TIMEOUT = PropertyDescriptor(name="Request Timeout", description="Seconds a registry read may stall.", required=True, default_value="600",
                     validators=[StandardValidators.POSITIVE_INTEGER_VALIDATOR])
 
-    PROPERTIES = [REGISTRY_URL, USERNAME, PASSWORD, CA_FILE, TRUSTED, IMAGE_SOURCE, REPOSITORIES, TAG_FILTER, LEDGER_URL,
+    PROPERTIES = [REGISTRY_URL, USERNAME, PASSWORD, SSL_CONTEXT, TRUSTED, IMAGE_SOURCE, REPOSITORIES, TAG_FILTER, LEDGER_URL,
                   LEDGER_TOKEN, LEDGER_TOKEN_HEADER, IMAGE_LIST, INITIAL_RUN, REWRITE, STRIP, OUTPUT_DIR, PREFIX,
                   ARTIFACT_TYPE, MAX_SIZE, TIMEOUT]
 
@@ -245,7 +245,7 @@ class PullContainerImages(FlowFileSource):
     # -- one run ----------------------------------------------------------------------------------
     def create(self, context):
         client = RegistryClient(self._value(context, self.REGISTRY_URL), self._value(context, self.USERNAME),
-                                context.getProperty(self.PASSWORD).getValue(), self._value(context, self.CA_FILE),
+                                context.getProperty(self.PASSWORD).getValue(), trusted_der(context.getProperty(self.SSL_CONTEXT)),
                                 int(context.getProperty(self.TIMEOUT).getValue()),
                                 self._value(context, self.TRUSTED))
         directory = self._value(context, self.OUTPUT_DIR)
@@ -418,14 +418,8 @@ class PullContainerImages(FlowFileSource):
                           lambda: state_manager.setState(dump_state(exported, remaining), Scope.CLUSTER)), remaining
 
     def _attributes(self, context, client, directory, name, sha, images):
-        attributes = {
-            "filename": name, "Filename": name, "absolute.path": directory.rstrip("/") + "/",
-            "Content-Type": "application/octet-stream", "mime.type": "application/x-tar",
-            "X-Sha256": sha, "X-Artifact-Type": context.getProperty(self.ARTIFACT_TYPE).getValue(),
-            "X-Artifact-Format": "tar", "registry.host": client.host,
-            "registry.images": "\n".join(images),
-            "file.size": str(os.path.getsize(os.path.join(directory, name))),
-        }
+        attributes = export_attributes(directory, name, sha, client.host,
+                                       context.getProperty(self.ARTIFACT_TYPE).getValue(), images)
         for descriptor in context.getProperties():
             if descriptor.dynamic:
                 value = context.getProperty(descriptor).evaluateAttributeExpressions(Attributes(attributes))
@@ -460,10 +454,4 @@ class PullContainerImages(FlowFileSource):
         return None
 
     def _max_size(self, context):
-        value = context.getProperty(self.MAX_SIZE).getValue()
-        if not value:
-            return 0
-        match = re.fullmatch(r"\s*([\d.]+)\s*([KMGT]?B)?\s*", value.upper())
-        if not match:
-            raise RegistryError(f"Max Export Size {value!r} is not a size such as 20 GB")
-        return int(float(match.group(1)) * UNITS[match.group(2) or "B"])
+        return parse_size(context.getProperty(self.MAX_SIZE).getValue())
