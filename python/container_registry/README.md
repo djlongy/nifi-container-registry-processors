@@ -16,6 +16,18 @@ Copy this directory into the Python extensions directory (`nifi.python.extension
 cp -r python/container_registry /opt/nifi/nifi-current/python_extensions/
 ```
 
+On Kubernetes, build `python/Containerfile` and copy from it in an init container, so every pod has the processors before NiFi starts:
+
+```yaml
+initContainers:
+  - name: python-extensions
+    image: <registry>/<ns>/nifi-container-registry-python@sha256:<digest>
+    command: ["sh", "-c", "rm -rf /target/container_registry && cp -r /extensions/container_registry /target/"]
+    volumeMounts:
+      - name: python-extensions
+        mountPath: /target
+```
+
 NiFi discovers both processors within a minute, listed as `PullContainerImages 1.4.0` and `PushContainerImages 1.4.0` (bundle `python-extensions`). An edited file reloads when the processor next starts.
 
 ## Properties
