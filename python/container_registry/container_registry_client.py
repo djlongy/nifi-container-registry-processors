@@ -702,6 +702,39 @@ def plan_image(client, repository, digest):
     return root, children, blobs
 
 
+def host_of(registry):
+    return re.sub(r":443$", "", (registry or "").lower())
+
+
+def allowed(repository, entries):
+    """True when repository equals an allowlist entry, or starts with one that ends in *."""
+    return any(repository.startswith(e[:-1]) if e.endswith("*") else repository == e for e in entries)
+
+
+def webhook_images(body, sha256, host, entries):
+    """[(repository, tag, digest)] a gitlab-registry-mirror webhook body names, once it has passed every check that
+    needs no registry: the X-Sha256 attribute, the registry host, Allowed Repositories entries and name syntax."""
+    if sha256 != hashlib.sha256(body).hexdigest():
+        raise RegistryError("X-Sha256 is missing or is not the sha256 of the body")
+    try:
+        request = json.loads(body)
+        registry, images = request["registry"], request["images"]
+        names = [(i["repository"], i["tag"], i["digest"]) for i in images]
+        valid = isinstance(registry, str) and names and all(isinstance(v, str) for n in names for v in n)
+    except (ValueError, KeyError, TypeError):
+        valid = False
+    if not valid:
+        raise RegistryError('the body is not JSON {"registry": "host", "images": [{"repository", "tag", "digest"}]}')
+    if host_of(registry) != host_of(host):
+        raise RegistryError(f"the body names registry {registry}, not {host}")
+    for repository, tag, digest in names:
+        if not allowed(repository, entries):
+            raise RegistryError(f"{repository} is not in Allowed Repositories")
+        if not (REPOSITORY.fullmatch(repository) and TAG.fullmatch(tag) and DIGEST.fullmatch(digest)):
+            raise RegistryError(f"not a valid repository, tag and digest: {repository}:{tag}@{digest}")
+    return list(dict.fromkeys(names))
+
+
 def bundle_bytes(blob_maps):
     """Blob bytes of one tar: each distinct blob digest counted once, however many images share it."""
     return sum({digest: size for blobs in blob_maps for digest, size in blobs.items()}.values())
