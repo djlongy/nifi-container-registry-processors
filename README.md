@@ -4,6 +4,8 @@ NiFi Python processors that export container images from a registry into a tar a
 
 The Python processors in `python/container_registry/` are the maintained implementation. They need no build and no dependencies; see that directory's README for installing and operating them.
 
+The earlier NAR releases (v1.x on GitHub) are no longer maintained. The Python processors replace them; see the [migration table](#upgrading-from-14x-or-earlier-renamed-and-removed-properties) for renamed and removed properties.
+
 ## More documentation
 
 [docs/README.md](docs/README.md) maps the decision records (why Python, where the tar lives, parameters, one tar or many, webhook trust), the click-by-click runbook, the testing checklist and the attribute reference.
