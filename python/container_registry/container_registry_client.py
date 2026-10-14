@@ -165,7 +165,7 @@ def sha256_hex(data):
 def rebase(target, rewrite=None, strip=False):
     """target with its first path segment replaced (rewrite) or removed (strip)."""
     if strip and rewrite:
-        raise RegistryError("set Rewrite Base Path or Strip Base Path, not both")
+        raise RegistryError("set Rewrite Target Base Path or Strip Target Base Path, not both")
     if strip:
         if "/" not in target:
             raise RegistryError(f"{target} has no base path to strip")
@@ -219,10 +219,10 @@ class RegistryClient:
     def __init__(self, url, username=None, password=None, ca_der=(), timeout=3600, trusted_hosts=None):
         url = (url or "").rstrip("/")
         if not url.startswith(("https://", "http://")):
-            raise RegistryError("Registry URL must start with https:// or http://")
+            raise RegistryError("The registry URL must start with https:// or http://")
         parts = urllib.parse.urlsplit(url)
         if "@" in parts.netloc:
-            raise RegistryError("Registry URL must not carry a user name or password; set Username and Password")
+            raise RegistryError("The registry URL must not carry a user name or password; set the registry username and password properties")
         self.base = url
         self.host = parts.netloc
         self.base_path = parts.path
@@ -317,7 +317,7 @@ class RegistryClient:
         response = self._open(method, url, self._with_auth(key, headers), data)
         if response.status in (401, 403):
             what = "the catalog" if repository is None else f"{actions} on {repository}"
-            who = ("an anonymous client; set Username and Password" if self.username is None
+            who = ("an anonymous client; set the registry username and password properties" if self.username is None
                    else f"{self.username}; check the credentials and that the account may {actions} there")
             raise RegistryError(f"{self.host} refused {what} to {who} (HTTP {response.status})")
         return response
@@ -335,7 +335,7 @@ class RegistryClient:
     def _authorize(self, challenge, repository, actions, mount_from):
         if challenge[:5].lower() == "basic":
             if self.username is None:
-                raise RegistryError(f"{self.host} asks for a username and password; set Username and Password")
+                raise RegistryError(f"{self.host} asks for a username and password; set the registry username and password properties")
             return self._basic()
         if challenge[:6].lower() != "bearer":
             raise RegistryError(f"{self.host} refused the request with no usable challenge ({challenge.split(' ')[0]})")
@@ -429,7 +429,7 @@ class RegistryClient:
             path = urllib.parse.urlsplit(url)
             if "/v2/" not in path.path:
                 raise RegistryError(f"listing {what} was sent a next page that is not under /v2/")
-            path = path.path.split("/v2/", 1)[1] + (f"?{path.query}" if path.query else "")  # onto Registry URL's base
+            path = path.path.split("/v2/", 1)[1] + (f"?{path.query}" if path.query else "")  # onto the registry URL base
             response = self._send(repository, "pull", "GET", path)
             if response.status == 404 and repository is not None and not out:
                 return None  # no such repository
@@ -700,6 +700,11 @@ def plan_image(client, repository, digest):
         if not client.blob_exists(repository, blob):
             raise RegistryError(f"blob {blob} is missing")
     return root, children, blobs
+
+
+def bundle_bytes(blob_maps):
+    """Blob bytes of one tar: each distinct blob digest counted once, however many images share it."""
+    return sum({digest: size for blobs in blob_maps for digest, size in blobs.items()}.values())
 
 
 def write_export(client, path, images):

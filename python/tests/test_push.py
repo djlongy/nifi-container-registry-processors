@@ -1,4 +1,5 @@
 """PushContainerImages.transform with the NiFi API stood in."""
+import fcntl
 import os
 import tempfile
 import types
@@ -28,7 +29,7 @@ def ssl_service(ders):
 def make_push(**values):
     processor = PushContainerImages()
     processor.logger = nifi_stub.Logger()
-    settings = {"Registry URL": "http://127.0.0.1:1", "Delete Tar File": "true"}
+    settings = {"Target Registry URL": "http://127.0.0.1:1", "Delete Input Tar": "true"}
     settings.update(values)
     return processor, nifi_stub.FakeContext(PushContainerImages.PROPERTIES, settings)
 
@@ -36,12 +37,91 @@ def make_push(**values):
 class MissingTar(unittest.TestCase):
     def test_a_missing_tar_routes_to_failure_with_the_reason(self):
         path = os.path.join(tempfile.mkdtemp(), "gone.tar")
-        processor, context = make_push(**{"Tar File": path})
+        processor, context = make_push(**{"Input Tar Path": path})
         result = processor.transform(context, FlowFile())
         self.assertEqual(result.relationship, "failure")
         self.assertIn("gone.tar", result.attributes["registry.error"])
         self.assertNotIn("pushing", result.attributes["registry.error"])
         self.assertIn("gone.tar", processor.logger.text())
+
+
+class Adopt(unittest.TestCase):
+    def push(self, path):
+        original = (push_module.RegistryClient, push_module.push_export)
+        push_module.RegistryClient = lambda *args: types.SimpleNamespace(host="registry.test")
+        push_module.push_export = lambda client, tar, *rest: (1, 0, [f"read {os.path.basename(tar)}"])
+        self.addCleanup(lambda: (setattr(push_module, "RegistryClient", original[0]),
+                                 setattr(push_module, "push_export", original[1])))
+        processor, context = make_push(**{"Input Tar Path": path})
+        return processor.transform(context, FlowFile())
+
+    def test_a_tar_left_by_a_killed_push_is_adopted_and_deleted(self):
+        directory = tempfile.mkdtemp()
+        path = os.path.join(directory, "a.tar")
+        open(path + ".pushing-abc", "w").close()
+        result = self.push(path)
+        self.assertEqual(result.relationship, "success")
+        self.assertEqual(os.listdir(directory), [])
+
+    def test_more_than_one_leftover_is_an_error_naming_them_all(self):
+        directory = tempfile.mkdtemp()
+        path = os.path.join(directory, "a.tar")
+        for suffix in ("one", "two"):
+            open(f"{path}.pushing-{suffix}", "w").close()
+        result = self.push(path)
+        self.assertEqual(result.relationship, "failure")
+        self.assertIn("a.tar.pushing-one", result.attributes["registry.error"])
+        self.assertIn("a.tar.pushing-two", result.attributes["registry.error"])
+        self.assertEqual(len(os.listdir(directory)), 2)
+
+
+    def hold(self, name):
+        handle = open(name, "r+")
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.addCleanup(handle.close)
+
+    def test_a_leftover_held_by_a_live_push_is_not_adopted(self):
+        directory = tempfile.mkdtemp()
+        path = os.path.join(directory, "a.tar")
+        open(path + ".pushing-live", "w").close()
+        self.hold(path + ".pushing-live")
+        result = self.push(path)
+        self.assertEqual(result.relationship, "failure")
+        self.assertIn("still running", result.attributes["registry.error"])
+        self.assertEqual(os.listdir(directory), ["a.tar.pushing-live"])
+
+    def test_only_the_unlocked_leftover_is_adopted(self):
+        directory = tempfile.mkdtemp()
+        path = os.path.join(directory, "a.tar")
+        for suffix in ("live", "dead"):
+            open(f"{path}.pushing-{suffix}", "w").close()
+        self.hold(path + ".pushing-live")
+        self.assertEqual(self.push(path).relationship, "success")
+        self.assertEqual(os.listdir(directory), ["a.tar.pushing-live"])
+
+    def test_the_claimed_tar_is_locked_while_it_is_pushed(self):
+        directory = tempfile.mkdtemp()
+        path = os.path.join(directory, "a.tar")
+        open(path, "w").close()
+        seen = []
+
+        def probe(client, tar, *rest):
+            handle = open(tar, "r+")
+            self.addCleanup(handle.close)
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                seen.append("free")
+            except OSError:
+                seen.append("locked")
+            return 1, 0, []
+        original = (push_module.RegistryClient, push_module.push_export)
+        push_module.RegistryClient = lambda *args: types.SimpleNamespace(host="registry.test")
+        push_module.push_export = probe
+        self.addCleanup(lambda: (setattr(push_module, "RegistryClient", original[0]),
+                                 setattr(push_module, "push_export", original[1])))
+        processor, context = make_push(**{"Input Tar Path": path})
+        self.assertEqual(processor.transform(context, FlowFile()).relationship, "success")
+        self.assertEqual(seen, ["locked"])
 
 
 class EnvironmentScope(unittest.TestCase):
@@ -52,8 +132,8 @@ class EnvironmentScope(unittest.TestCase):
         original = push_module.RegistryClient
         push_module.RegistryClient = lambda *args: seen.append(args) or (_ for _ in ()).throw(RuntimeError("stop"))
         self.addCleanup(setattr, push_module, "RegistryClient", original)
-        processor, context = make_push(**{"Username": "${TEST_PUSH_USER}", "SSL Context Service": "ssl",
-                                          "Tar File": "/nonexistent.tar"})
+        processor, context = make_push(**{"Target Registry Username": "${TEST_PUSH_USER}", "SSL Context Service": "ssl",
+                                          "Input Tar Path": "/nonexistent.tar"})
         context.services["SSL Context Service"] = ssl_service([b"der-one"])
         processor.transform(context, FlowFile())
         self.assertEqual((seen[0][1], seen[0][3]), ("robot", [b"der-one"]))
@@ -63,7 +143,7 @@ class EnvironmentScope(unittest.TestCase):
         original = push_module.RegistryClient
         push_module.RegistryClient = lambda *args: seen.append(args) or (_ for _ in ()).throw(RuntimeError("stop"))
         self.addCleanup(setattr, push_module, "RegistryClient", original)
-        processor, context = make_push(**{"Tar File": "/nonexistent.tar"})
+        processor, context = make_push(**{"Input Tar Path": "/nonexistent.tar"})
         processor.transform(context, FlowFile())
         self.assertEqual(seen[0][3], [])
 

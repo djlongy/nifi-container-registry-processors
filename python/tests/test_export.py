@@ -10,6 +10,11 @@ from fake_registry import FakeRegistry, digest
 import container_registry_client as c
 
 
+class BundleBytes(unittest.TestCase):
+    def test_a_digest_shared_by_two_images_counts_once(self):
+        self.assertEqual(c.bundle_bytes([{"sha256:a": 10, "sha256:b": 5}, {"sha256:a": 10, "sha256:c": 1}]), 16)
+
+
 def export(source, images, directory=None):
     """images: [(repository, tag, digest)] -> path of the tar write_export made from source."""
     path = os.path.join(directory or tempfile.mkdtemp(), "export.tar")
