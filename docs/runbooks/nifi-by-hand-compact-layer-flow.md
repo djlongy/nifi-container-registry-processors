@@ -443,7 +443,13 @@ Keep failed bytes in place while you read the bulletin and `registry.error`. Do 
 | Exhausted network retries | Fix registry/network trouble, then submit the same trusted request again; blobs already present on high are deduplicated |
 | Stalled large blob | Check content disk, queue byte threshold, ingress/registry timeouts and active InvokeHTTP tasks before raising concurrency |
 
-For selective lost-layer recovery, read the high bulletin (example `team/app:1.0 (linux/amd64) incomplete: missing layers 2,3 ... check a1b2c3d4`). On **low** temporarily create one **GenerateFlowFile 2.12.0**, name it `ResendLayers`, and connect its `success` directly to PlanTransfer with the common queue settings. Do not auto-terminate success. Keep it **stopped** and use **Run once**, never continuous Start. Use the common scheduling/penalty settings, with Run duration `0 ms`, and set all its fixed properties as follows:
+### Recommended: resend the whole image by tag
+
+If you do not want to work with layer numbers, **resend the entire image**. Low sends its config, layers and manifest/index; high skips blobs already present and uploads the missing ones. This uses more diode bandwidth than selective recovery, but the operator enters only the repository and tag. It also sends a fresh manifest, so it works when the earlier high manifest already exhausted its retries into Hold. Keep the old held failure until you have verified the replacement; do not start Hold to discard it.
+
+Create one optional **GenerateFlowFile 2.12.0** on low, name it `ResendImage`, and connect `success` directly to `PlanTransfer`. Name that connection `ResendImageToPlanTransfer`, select `success` only, and use the common queue settings (`20` objects, `20 GB`, `0 sec` expiration, no prioritizer/load balancing). Auto-terminate nothing on the generator. This adds one manual recovery card to the eight-card low flow; you can keep it disabled when idle. No extra UpdateAttribute processor is needed.
+
+Set every fixed property as follows:
 
 | Property | Value |
 |---|---|
@@ -455,15 +461,56 @@ For selective lost-layer recovery, read the high bulletin (example `team/app:1.0
 | Character Set | `UTF-8` |
 | Mime Type | `application/json` |
 
-In that **same GenerateFlowFile**, add these dynamic properties, which become FlowFile attributes; no separate UpdateAttribute card is needed:
+Use the common scheduling/penalty settings **except**:
 
-| Attribute | Example value |
+| Scheduling setting | Value |
+|---|---|
+| Execution | **Primary node**, including on a cluster |
+| Concurrent tasks | `1` |
+| Run schedule | `1 min` (use Run once, never Start) |
+| Run duration | `0 ms` |
+
+On a cluster, All nodes can generate one request on **each** node. Primary node plus batch size 1 was verified to generate exactly one request per Run once. On a standalone NiFi the primary-node setting is also appropriate.
+
+[![Manual replay scheduling, Primary node](../images/plana-replay-primary-node.jpg)](../images/plana-replay-primary-node.jpg)
+
+Add **one dynamic property** with Properties → +:
+
+| Dynamic property | Example value |
+|---|---|
+| registry.image.reference | `team/app:1.0` |
+
+The reference is relative to the configured source registry: enter `repository:tag`, without a registry host or URL. Remove any previous `registry.layers`, `registry.check` and `registry.platform` dynamic properties for whole-image mode. The planner uses its configured Platform Selection (`all` in this guide).
+
+[![Whole-image resend: one image reference](../images/plana-resend-image-settings.jpg)](../images/plana-resend-image-settings.jpg)
+
+1. Keep normal low/high processing running; leave both Holds disabled.
+2. If ResendImage is disabled, right-click → **Enable** so it is stopped. Configure and apply the image reference above.
+3. Right-click ResendImage → **Run Once**. Do not click Start.
+4. Check high's tag/digest/blob sizes and that failure/work queues drain. The generator should show one new request, not one per node.
+5. After the request has been emitted, remove `registry.image.reference` and any selective fields, then **Disable ResendImage** again. Leave the normal webhook flow running.
+
+A stopped generator does not run merely because you edit it. Run Once creates the request; PlanTransfer needs that incoming FlowFile. Starting the generator after clearing its reference would produce invalid requests repeatedly. Disable it while idle so starting the whole group cannot trigger accidental resends.
+
+Whole-image `repository:tag` resolves the tag's **current** digest. If the tag moved, you get its current image, which may not repair an older held manifest. Prefer immutable/version tags; use the selective check-code mode below when you need to reject a changed tag. The manual reference bypasses webhook JSON/checksum parsing, but registry/allowlist validation still applies; restrict who can configure/run the generator.
+
+### Optional: resend named layers only
+
+For bandwidth-sensitive recovery, read the high bulletin's image, platform, layer numbers and eight-character check code. On the same **stopped** ResendImage generator add these dynamic properties:
+
+| Dynamic property | Example value |
 |---|---|
 | registry.image.reference | `team/app:1.0` |
 | registry.layers | `2,3` |
-| registry.check | `a1b2c3d4` (the exact bulletin code) |
+| registry.check | `a1b2c3d4` (exact bulletin code) |
 | registry.platform | `linux/amd64` (exact bulletin platform; optional for a single-platform image) |
 
-After wiring and configuring the stopped generator, select **Run once**. Its manual reference bypasses webhook JSON parsing/checksum validation, but the allowlist and registry checks still apply. The planner refuses a stale check code if the tag moved. It resends the config and selected layer blobs, **not a second manifest**; the existing high manifest must still be retained in its retry/hold queue. If that manifest already exhausted retries and is in Hold, resending only layers will not automatically commit it. Fix the cause and explicitly requeue that manifest through high RouteTransfer (with its retry counter reset), or submit a complete low request again. Do not release unrelated held failures.
+Use Enable → configure/apply → Run Once → clear the four fields → Disable, with Primary node and batch size 1. The planner refuses a stale check code if the tag moved. Selective replay sends the **small config plus the selected layers**, not a manifest and not the other layers. The existing high manifest must still be retained in its retry/hold queue. If that manifest already exhausted retries into Hold, resending layers alone will not automatically commit it: explicitly requeue that manifest with its retry counter reset, or use whole-image mode instead.
 
-After recovery, leave the temporary generator stopped and remove it only after its own connection queue is empty. No scheduled resend is supplied: the operator requests missing layers. Starting the disabled Hold is never the recovery procedure.
+[![Selective replay settings from the live proof](../images/plana-replay-layer-settings.jpg)](../images/plana-replay-layer-settings.jpg)
+
+The low canvas with the optional recovery source looks like this (the screenshot was captured during selective setup, before the card was renamed ResendImage):
+
+[![Low-side manual recovery connection](../images/plana-replay-low-side.jpg)](../images/plana-replay-low-side.jpg)
+
+Both modes were verified on the live Quay/NiFi pair, including a whole-image Run once after the unique layer file was removed from active high-side storage. The file was recreated by NiFi and matched the exact SHA-256 and size. See [the reproducible evidence and proof boundary](plana-recovery-proof.md). No scheduled resend is supplied; recovery is operator-triggered.
