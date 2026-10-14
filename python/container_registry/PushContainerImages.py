@@ -1,3 +1,5 @@
+import fcntl
+import glob
 import os
 import tempfile
 import uuid
@@ -11,48 +13,142 @@ from nifi_attributes import Attributes, evaluate
 from container_registry_client import RegistryClient, RegistryError, push_export, trusted_der
 
 
+def _lock(path):
+    """An fd holding an exclusive flock on path, or None when it is locked (a live push) or gone. Opened read-write
+    because flock on NFS is emulated with fcntl locks, and an exclusive one needs a writable descriptor."""
+    try:
+        fd = os.open(path, os.O_RDWR)
+    except OSError:
+        return None
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
+
+
+def _take(path):
+    """(file to claim, fd holding its lock). Input Tar Path itself, else the one <path>.pushing-* a killed push left.
+    A leftover that is locked belongs to a push still running and is not touched."""
+    if os.path.isfile(path):
+        fd = _lock(path)
+        if fd is None:
+            raise RegistryError(f"Input Tar Path {path} is locked: a push of it is running")
+        return path, fd
+    found = [(name, _lock(name)) for name in sorted(glob.glob(glob.escape(path) + ".pushing-*"))]
+    free = [(name, fd) for name, fd in found if fd is not None]
+    if len(free) == 1:
+        return free[0]
+    for _, fd in free:
+        os.close(fd)
+    if free:
+        raise RegistryError(f"Input Tar Path {path} does not exist and more than one push was left part way: "
+                            f"{', '.join(name for name, _ in free)}. Keep one, delete the others")
+    note = ", and a push of that tar is still running" if found else ""
+    raise RegistryError(f"Input Tar Path {path} does not exist{note}")
+
+
 @use_case(description="Push container images that arrived through a data diode into the high-side registry.",
           configuration="""Route on X-Artifact-Type equals container-images, PutFile the tar to a directory, then set
-          Tar File to that directory plus /${filename} and Delete Tar File to true. Auto-terminate original.""",
+          Input Tar Path to that directory plus /${filename} and Delete Input Tar to true. Auto-terminate original.""",
           keywords=["container", "diode", "registry", "import"])
 class PushContainerImages(FlowFileTransform):
     class Java:
         implements = ["org.apache.nifi.python.processor.FlowFileTransform"]
 
     class ProcessorDetails:
-        version = "2.0.0"
-        description = ("Pushes every image of a mirror.py export tar to an OCI registry. The tar is read from Tar "
-                       "File, or from the FlowFile content when Tar File is empty. Every target tag is checked "
-                       "before the first upload, so a refusal pushes nothing.")
+        version = "1.5.0"
+        description = ("Pushes every image of a mirror.py export tar into the target registry, digests unchanged. The tar "
+                       "is read from the local disk path in Input Tar Path (set it for any real tar), or from the "
+                       "FlowFile content when that is empty. Every target tag is checked before the first upload, so "
+                       "a refusal pushes nothing. In a cluster the file must be on the node that runs this processor.")
         tags = ["container", "image", "oci", "docker", "registry", "import", "diode"]
 
-    REGISTRY_URL = PropertyDescriptor(name="Registry URL", description="The registry to push to: https://registry.example.internal, or "
-                         "https://<host>/artifactory/api/docker/<repo-key> for Artifactory.", required=True,
-                         validators=[StandardValidators.URL_VALIDATOR],
-                         expression_language_scope=ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
-    USERNAME = PropertyDescriptor(name="Username", description="Registry user. Empty: anonymous.",
-                     expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
-    PASSWORD = PropertyDescriptor(name="Password", description="Registry password or token.", sensitive=True)
-    SSL_CONTEXT = PropertyDescriptor(name="SSL Context Service", description="The truststore whose CAs are trusted in addition to the system "
-                    "store and SSL_CERT_FILE.", controller_service_definition="org.apache.nifi.ssl.SSLContextProvider")
-    TRUSTED = PropertyDescriptor(name="Trusted Storage Hosts", description="Comma separated host names, addresses or CIDR ranges "
-                    "(10.0.0.0/8) that the registry may redirect blob downloads and uploads to although they are not public "
-                    "addresses, such as an on-premises MinIO. Anything else the registry names that is loopback, link-local, "
-                    "private or plain http from an https registry is refused. The registry's own host is always allowed at the addresses its name resolves to.")
-    TAR_FILE = PropertyDescriptor(name="Tar File", description="Path of the export tar on local disk, such as /data/in/${filename} after PutFile. "
-                     "Empty: the FlowFile content, which NiFi hands to Python in memory, so keep that for small tars.",
-                     expression_language_scope=ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
-    DELETE_TAR = PropertyDescriptor(name="Delete Tar File", description="Delete Tar File once every image is pushed.", required=True,
-                       allowable_values=["true", "false"], default_value="false")
-    REWRITE = PropertyDescriptor(name="Rewrite Base Path", description="Replace the first path segment of each target repository with this.",
-                    expression_language_scope=ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
-    STRIP = PropertyDescriptor(name="Strip Base Path", description="Remove the first path segment of each target repository.", required=True,
-                  allowable_values=["true", "false"], default_value="false")
-    MOVE_TAGS = PropertyDescriptor(name="Move Existing Tags", description="Let a push move a tag that points at another digest. false: such a "
-                      "tar fails and nothing is pushed.", required=True, allowable_values=["true", "false"],
-                      default_value="false")
-    TIMEOUT = PropertyDescriptor(name="Request Timeout", description="Seconds a registry read or write may stall.", required=True,
-                    default_value="600", validators=[StandardValidators.POSITIVE_INTEGER_VALIDATOR])
+    REGISTRY_URL = PropertyDescriptor(
+        name="Target Registry URL",
+        description=(
+            "Registry to push images into, such as https://registry.example.com, or "
+            "https://host/artifactory/api/docker/repo-key for Artifactory. No user:password in the "
+            "URL. Required, no default. FlowFile attributes allowed."),
+        required=True,
+        validators=[StandardValidators.URL_VALIDATOR],
+        expression_language_scope=ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
+    USERNAME = PropertyDescriptor(
+        name="Target Registry Username",
+        description=(
+            "User for the target registry. Empty (default): anonymous access, which works only on a "
+            "registry that allows it. Environment variables allowed: ${REGISTRY_USER}."),
+        expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
+    PASSWORD = PropertyDescriptor(
+        name="Target Registry Password",
+        description=(
+            "Password or access token for the target registry. Empty (default): none sent. Sensitive:"
+            " reference a parameter, such as #{registry_password}."),
+        sensitive=True)
+    SSL_CONTEXT = PropertyDescriptor(
+        name="SSL Context Service",
+        description=(
+            "A StandardSSLContextService whose PKCS12 or JKS truststore holds the registry's CA (it "
+            "does not accept PEM). Its CAs add to the system store and SSL_CERT_FILE. Empty "
+            "(default): only those are trusted. Its keystore is ignored."),
+        controller_service_definition="org.apache.nifi.ssl.SSLContextProvider")
+    TRUSTED = PropertyDescriptor(
+        name="Trusted Storage Hosts",
+        description=(
+            "Hosts, IPs or CIDR ranges the registry may redirect blob transfers to although they are "
+            "private, such as an on-premises MinIO: minio.internal, 10.20.0.0/16. Empty (default): "
+            "private, loopback, link-local and http-from-https redirects are refused. The registry's "
+            "own host is always allowed."))
+    TAR_FILE = PropertyDescriptor(
+        name="Input Tar Path",
+        description=(
+            "Path of the export tar on this node's local disk, such as #{container-images.tar.dir}/"
+            "${filename}. Export must write it here, so no load balancing. Never in NiFi's "
+            "repositories. If missing, one <path>.pushing-* left by a kill is adopted. Empty "
+            "(default): FlowFile content, in memory, small tars only."),
+        expression_language_scope=ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
+    DELETE_TAR = PropertyDescriptor(
+        name="Delete Input Tar",
+        description=(
+            "Delete the tar once every image is pushed. Default false: it stays. A failed push keeps it. "
+            "The tar is renamed to <path>.pushing-<id> while pushing, so a killed push leaves that name; "
+            "a replay adopts it. Ignored when Input Tar Path is empty."),
+        required=True,
+        allowable_values=["true", "false"],
+        default_value="false")
+    REWRITE = PropertyDescriptor(
+        name="Rewrite Target Base Path",
+        description=(
+            "Replace the first path segment of every repository pushed: team/app becomes new/app with"
+            " new. Empty (default): the name recorded in the tar. Not with Strip Target Base Path. "
+            "FlowFile attributes allowed."),
+        expression_language_scope=ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
+    STRIP = PropertyDescriptor(
+        name="Strip Target Base Path",
+        description=(
+            "Remove the first path segment of every target repository: team/app becomes app. Default "
+            "false: names unchanged. Not with Rewrite Target Base Path."),
+        required=True,
+        allowable_values=["true", "false"],
+        default_value="false")
+    MOVE_TAGS = PropertyDescriptor(
+        name="Move Existing Tags",
+        description=(
+            "Let a push move a tag that already points at another digest in the target registry. "
+            "Default false: such a tar fails with registry.error and nothing is pushed. A tag already"
+            " at the right digest is skipped either way."),
+        required=True,
+        allowable_values=["true", "false"],
+        default_value="false")
+    TIMEOUT = PropertyDescriptor(
+        name="Request Timeout",
+        description=(
+            "Seconds a registry read or write may stall before it fails. Default 600 (10 minutes). "
+            "Blobs stream, so this is a stall limit, not a limit on the total time."),
+        required=True,
+        default_value="600",
+        validators=[StandardValidators.POSITIVE_INTEGER_VALIDATOR])
 
     PROPERTIES = [REGISTRY_URL, USERNAME, PASSWORD, SSL_CONTEXT, TRUSTED, TAR_FILE, DELETE_TAR, REWRITE, STRIP, MOVE_TAGS, TIMEOUT]
 
@@ -60,9 +156,9 @@ class PushContainerImages(FlowFileTransform):
         super().__init__()
 
     def getRelationships(self):
-        return [Relationship("success", "Every image of the tar is in the registry"),
-                Relationship("failure", "Nothing was pushed or the push stopped part way; registry.error says why"),
-                Relationship("original", "The incoming FlowFile", auto_terminated=True)]
+        return [Relationship("success", "Every image of the tar is now in the target registry, pushed or already present; registry.images lists them"),
+                Relationship("failure", "Nothing was pushed, or the push stopped part way; registry.error says why. Input Tar Path is kept for a retry"),
+                Relationship("original", "The incoming FlowFile, unchanged. Auto-terminated by default", auto_terminated=True)]
 
     def getPropertyDescriptors(self):
         return self.PROPERTIES
@@ -76,7 +172,7 @@ class PushContainerImages(FlowFileTransform):
     def transform(self, context, flowfile):
         path = self._value(context, self.TAR_FILE, flowfile)
         delete = bool(path) and context.getProperty(self.DELETE_TAR).getValue() == "true"
-        temporary = claimed = None
+        temporary = claimed = lock = None
         try:
             client = RegistryClient(self._value(context, self.REGISTRY_URL, flowfile),
                                     self._value(context, self.USERNAME, flowfile),
@@ -86,10 +182,9 @@ class PushContainerImages(FlowFileTransform):
                                     self._value(context, self.TRUSTED, flowfile))
             if delete:
                 # Renamed for the push, so a second task given the same path fails instead of racing on it.
-                if not os.path.isfile(path):
-                    raise RegistryError(f"Tar File {path} does not exist")
+                source, lock = _take(path)
                 claim = f"{path}.pushing-{uuid.uuid4().hex}"
-                os.rename(path, claim)
+                os.rename(source, claim)  # the lock follows the open file, not the name
                 claimed = claim  # only once the tar is really moved, so a failure does not try to move it back
             elif not path:
                 handle, temporary = tempfile.mkstemp(suffix=".tar")
@@ -102,6 +197,8 @@ class PushContainerImages(FlowFileTransform):
         except Exception as error:
             if claimed:
                 os.rename(claimed, path)  # back where it was, for a retry
+            if lock is not None:
+                os.close(lock)
             self.logger.error(f"Push of {path or 'the FlowFile content'} failed: {error}")
             return FlowFileTransformResult("failure", attributes={"registry.error": str(error)})
         finally:
@@ -115,5 +212,7 @@ class PushContainerImages(FlowFileTransform):
             except OSError as error:  # the images are pushed; a leftover file is not a failed push
                 self.logger.warn(f"Pushed, but could not delete {claimed}: {error}")
                 attributes["registry.tar.leftover"] = claimed
+        if lock is not None:
+            os.close(lock)  # only now, so no replay can adopt the tar while it is still being deleted
         self.logger.info(f"{client.host}: pushed {pushed} image tag(s), {present} already present")
         return FlowFileTransformResult("success", attributes=attributes)
