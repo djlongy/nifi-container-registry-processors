@@ -1,0 +1,376 @@
+{
+  "fixture": {
+    "source_repository": "ci/plana-busybox",
+    "tag": "replay-proof-20261015",
+    "manifest_digest": "sha256:f6d01108983017ad2bd69c8521075c232e72aaf375e0064c24f6376b212e58c9",
+    "check": "f6d01108"
+  },
+  "fault": "First two cases removed only dedicated fixture layer2 repository associations. Final physical case also removed the unique active high-side blob file into an out-of-path quarantine backup. Quay individual blob DELETE was unsupported (405). No other images or shared layers were changed.",
+  "checks": [
+    {
+      "phase": "selective-missing",
+      "timestamp": "2026-10-14T14:57:42.739755+00:00",
+      "layers": [
+        {
+          "number": 1,
+          "digest": "sha256:388fe936ed0dc1f4b7e6a260be8e93f584210756afa706445ba93d485fa0165f",
+          "size": 262407,
+          "head_status": 200,
+          "get_status": 200,
+          "actual_digest": "sha256:388fe936ed0dc1f4b7e6a260be8e93f584210756afa706445ba93d485fa0165f"
+        },
+        {
+          "number": 2,
+          "digest": "sha256:20245d360908c8180f10e2f2ec4942317496978e3efb100a744e5dea700a5996",
+          "size": 262414,
+          "head_status": 404,
+          "get_status": 404,
+          "actual_digest": null
+        }
+      ],
+      "manifest_digest": "sha256:f6d01108983017ad2bd69c8521075c232e72aaf375e0064c24f6376b212e58c9"
+    },
+    {
+      "phase": "selective-restored",
+      "timestamp": "2026-10-14T14:58:05.280462+00:00",
+      "layers": [
+        {
+          "number": 1,
+          "digest": "sha256:388fe936ed0dc1f4b7e6a260be8e93f584210756afa706445ba93d485fa0165f",
+          "size": 262407,
+          "head_status": 200,
+          "get_status": 200,
+          "actual_digest": "sha256:388fe936ed0dc1f4b7e6a260be8e93f584210756afa706445ba93d485fa0165f"
+        },
+        {
+          "number": 2,
+          "digest": "sha256:20245d360908c8180f10e2f2ec4942317496978e3efb100a744e5dea700a5996",
+          "size": 262414,
+          "head_status": 200,
+          "get_status": 200,
+          "actual_digest": "sha256:20245d360908c8180f10e2f2ec4942317496978e3efb100a744e5dea700a5996"
+        }
+      ],
+      "manifest_digest": "sha256:f6d01108983017ad2bd69c8521075c232e72aaf375e0064c24f6376b212e58c9"
+    },
+    {
+      "phase": "full-image-missing",
+      "timestamp": "2026-10-14T14:59:41.578300+00:00",
+      "layers": [
+        {
+          "number": 1,
+          "digest": "sha256:388fe936ed0dc1f4b7e6a260be8e93f584210756afa706445ba93d485fa0165f",
+          "size": 262407,
+          "head_status": 200,
+          "get_status": 200,
+          "actual_digest": "sha256:388fe936ed0dc1f4b7e6a260be8e93f584210756afa706445ba93d485fa0165f"
+        },
+        {
+          "number": 2,
+          "digest": "sha256:20245d360908c8180f10e2f2ec4942317496978e3efb100a744e5dea700a5996",
+          "size": 262414,
+          "head_status": 404,
+          "get_status": 404,
+          "actual_digest": null
+        }
+      ],
+      "manifest_digest": "sha256:f6d01108983017ad2bd69c8521075c232e72aaf375e0064c24f6376b212e58c9"
+    },
+    {
+      "phase": "full-image-restored",
+      "timestamp": "2026-10-14T15:02:43.104134+00:00",
+      "layers": [
+        {
+          "number": 1,
+          "digest": "sha256:388fe936ed0dc1f4b7e6a260be8e93f584210756afa706445ba93d485fa0165f",
+          "size": 262407,
+          "head_status": 200,
+          "get_status": 200,
+          "actual_digest": "sha256:388fe936ed0dc1f4b7e6a260be8e93f584210756afa706445ba93d485fa0165f"
+        },
+        {
+          "number": 2,
+          "digest": "sha256:20245d360908c8180f10e2f2ec4942317496978e3efb100a744e5dea700a5996",
+          "size": 262414,
+          "head_status": 200,
+          "get_status": 200,
+          "actual_digest": "sha256:20245d360908c8180f10e2f2ec4942317496978e3efb100a744e5dea700a5996"
+        }
+      ],
+      "manifest_digest": "sha256:f6d01108983017ad2bd69c8521075c232e72aaf375e0064c24f6376b212e58c9"
+    },
+    {
+      "phase": "final-cleanup-verified",
+      "timestamp": "2026-10-14T15:04:26.405536+00:00",
+      "layers": [
+        {
+          "number": 1,
+          "digest": "sha256:388fe936ed0dc1f4b7e6a260be8e93f584210756afa706445ba93d485fa0165f",
+          "size": 262407,
+          "head_status": 200,
+          "get_status": 200,
+          "actual_digest": "sha256:388fe936ed0dc1f4b7e6a260be8e93f584210756afa706445ba93d485fa0165f"
+        },
+        {
+          "number": 2,
+          "digest": "sha256:20245d360908c8180f10e2f2ec4942317496978e3efb100a744e5dea700a5996",
+          "size": 262414,
+          "head_status": 200,
+          "get_status": 200,
+          "actual_digest": "sha256:20245d360908c8180f10e2f2ec4942317496978e3efb100a744e5dea700a5996"
+        }
+      ],
+      "manifest_digest": "sha256:f6d01108983017ad2bd69c8521075c232e72aaf375e0064c24f6376b212e58c9"
+    },
+    {
+      "phase": "physical-full-image-missing",
+      "timestamp": "2026-10-14T15:09:28.312041+00:00",
+      "layers": [
+        {
+          "number": 1,
+          "digest": "sha256:388fe936ed0dc1f4b7e6a260be8e93f584210756afa706445ba93d485fa0165f",
+          "size": 262407,
+          "head_status": 200,
+          "get_status": 200,
+          "actual_digest": "sha256:388fe936ed0dc1f4b7e6a260be8e93f584210756afa706445ba93d485fa0165f"
+        },
+        {
+          "number": 2,
+          "digest": "sha256:20245d360908c8180f10e2f2ec4942317496978e3efb100a744e5dea700a5996",
+          "size": 262414,
+          "head_status": 404,
+          "get_status": 404,
+          "actual_digest": null
+        }
+      ],
+      "manifest_digest": "sha256:f6d01108983017ad2bd69c8521075c232e72aaf375e0064c24f6376b212e58c9"
+    },
+    {
+      "phase": "physical-full-image-restored",
+      "timestamp": "2026-10-14T15:09:46.884865+00:00",
+      "layers": [
+        {
+          "number": 1,
+          "digest": "sha256:388fe936ed0dc1f4b7e6a260be8e93f584210756afa706445ba93d485fa0165f",
+          "size": 262407,
+          "head_status": 200,
+          "get_status": 200,
+          "actual_digest": "sha256:388fe936ed0dc1f4b7e6a260be8e93f584210756afa706445ba93d485fa0165f"
+        },
+        {
+          "number": 2,
+          "digest": "sha256:20245d360908c8180f10e2f2ec4942317496978e3efb100a744e5dea700a5996",
+          "size": 262414,
+          "head_status": 200,
+          "get_status": 200,
+          "actual_digest": "sha256:20245d360908c8180f10e2f2ec4942317496978e3efb100a744e5dea700a5996"
+        }
+      ],
+      "manifest_digest": "sha256:f6d01108983017ad2bd69c8521075c232e72aaf375e0064c24f6376b212e58c9"
+    }
+  ],
+  "provenance": {
+    "selective": {
+      "generator": [
+        {
+          "eventId": 12673017,
+          "eventTimestamp": "2026-10-14T14:57:43.751Z",
+          "eventType": "CREATE",
+          "fileSizeBytes": 2
+        }
+      ],
+      "low_fetch": [
+        {
+          "eventId": 12673150,
+          "eventTimestamp": "2026-10-14T14:57:44.265Z",
+          "eventType": "FETCH",
+          "fileSizeBytes": 262414
+        },
+        {
+          "eventId": 12673023,
+          "eventTimestamp": "2026-10-14T14:57:44.173Z",
+          "eventType": "FETCH",
+          "fileSizeBytes": 337
+        }
+      ],
+      "low_hash": [
+        {
+          "eventId": 12673154,
+          "eventTimestamp": "2026-10-14T14:57:44.273Z",
+          "eventType": "ATTRIBUTES_MODIFIED",
+          "fileSizeBytes": 262414
+        },
+        {
+          "eventId": 12673148,
+          "eventTimestamp": "2026-10-14T14:57:44.263Z",
+          "eventType": "ATTRIBUTES_MODIFIED",
+          "fileSizeBytes": 337
+        }
+      ],
+      "high_send": [
+        {
+          "eventId": 12676133,
+          "eventTimestamp": "2026-10-14T14:58:02.837Z",
+          "eventType": "SEND",
+          "fileSizeBytes": 561
+        },
+        {
+          "eventId": 12676108,
+          "eventTimestamp": "2026-10-14T14:58:02.785Z",
+          "eventType": "SEND",
+          "fileSizeBytes": 561
+        },
+        {
+          "eventId": 12674156,
+          "eventTimestamp": "2026-10-14T14:57:45.097Z",
+          "eventType": "SEND",
+          "fileSizeBytes": 262414
+        }
+      ]
+    },
+    "whole_image": {
+      "generator": [
+        {
+          "eventId": 12698922,
+          "eventTimestamp": "2026-10-14T15:01:58.574Z",
+          "eventType": "CREATE",
+          "fileSizeBytes": 2
+        }
+      ],
+      "low_fetch": [
+        {
+          "eventId": 12698985,
+          "eventTimestamp": "2026-10-14T15:01:59.349Z",
+          "eventType": "FETCH",
+          "fileSizeBytes": 262414
+        },
+        {
+          "eventId": 12698946,
+          "eventTimestamp": "2026-10-14T15:01:59.168Z",
+          "eventType": "FETCH",
+          "fileSizeBytes": 262407
+        },
+        {
+          "eventId": 12698942,
+          "eventTimestamp": "2026-10-14T15:01:59.052Z",
+          "eventType": "FETCH",
+          "fileSizeBytes": 337
+        }
+      ],
+      "low_hash": [
+        {
+          "eventId": 12698988,
+          "eventTimestamp": "2026-10-14T15:01:59.367Z",
+          "eventType": "ATTRIBUTES_MODIFIED",
+          "fileSizeBytes": 262414
+        },
+        {
+          "eventId": 12698981,
+          "eventTimestamp": "2026-10-14T15:01:59.337Z",
+          "eventType": "ATTRIBUTES_MODIFIED",
+          "fileSizeBytes": 561
+        },
+        {
+          "eventId": 12698980,
+          "eventTimestamp": "2026-10-14T15:01:59.337Z",
+          "eventType": "ATTRIBUTES_MODIFIED",
+          "fileSizeBytes": 262407
+        },
+        {
+          "eventId": 12698976,
+          "eventTimestamp": "2026-10-14T15:01:59.325Z",
+          "eventType": "ATTRIBUTES_MODIFIED",
+          "fileSizeBytes": 337
+        }
+      ],
+      "high_send": [
+        {
+          "eventId": 12699923,
+          "eventTimestamp": "2026-10-14T15:02:01.098Z",
+          "eventType": "SEND",
+          "fileSizeBytes": 561
+        },
+        {
+          "eventId": 12699919,
+          "eventTimestamp": "2026-10-14T15:02:01.056Z",
+          "eventType": "SEND",
+          "fileSizeBytes": 561
+        },
+        {
+          "eventId": 12699697,
+          "eventTimestamp": "2026-10-14T15:02:00.607Z",
+          "eventType": "SEND",
+          "fileSizeBytes": 262414
+        }
+      ]
+    }
+  },
+  "fault_cleanup": "Original fixture ManifestBlob association restored from backups after independent GET/hash proofs. Uploaded blob references and the missing physical active file were recreated by NiFi. File backup was never copied back to restore the active blob.",
+  "physical_blob_test": {
+    "active_file_removed": true,
+    "backup_kept_outside_active_blob_path": true,
+    "recreated_by_nifi": true,
+    "recreated_size": 262414,
+    "recreated_digest": "sha256:20245d360908c8180f10e2f2ec4942317496978e3efb100a744e5dea700a5996",
+    "backup_used_to_restore_file": false,
+    "original_manifest_reference_restored_after_proof": true,
+    "provenance": {
+      "Generator": [
+        {
+          "eventId": 12753541,
+          "eventTimestamp": "2026-10-14T15:09:30.439Z",
+          "eventType": "CREATE",
+          "fileSizeBytes": 2
+        }
+      ],
+      "LowFetch": [
+        {
+          "eventId": 12753591,
+          "eventTimestamp": "2026-10-14T15:09:31.090Z",
+          "eventType": "FETCH",
+          "fileSizeBytes": 262414
+        },
+        {
+          "eventId": 12753578,
+          "eventTimestamp": "2026-10-14T15:09:30.956Z",
+          "eventType": "FETCH",
+          "fileSizeBytes": 262407
+        },
+        {
+          "eventId": 12753574,
+          "eventTimestamp": "2026-10-14T15:09:30.852Z",
+          "eventType": "FETCH",
+          "fileSizeBytes": 337
+        }
+      ],
+      "HighUpload": [
+        {
+          "eventId": 12759246,
+          "eventTimestamp": "2026-10-14T15:10:02.456Z",
+          "eventType": "SEND",
+          "fileSizeBytes": 561
+        },
+        {
+          "eventId": 12759242,
+          "eventTimestamp": "2026-10-14T15:10:02.415Z",
+          "eventType": "SEND",
+          "fileSizeBytes": 561
+        },
+        {
+          "eventId": 12753707,
+          "eventTimestamp": "2026-10-14T15:09:32.643Z",
+          "eventType": "SEND",
+          "fileSizeBytes": 262414
+        }
+      ]
+    }
+  },
+  "final_state": {
+    "work_queues_empty": true,
+    "failure_queues_empty": true,
+    "holds_disabled": true,
+    "resend_image_disabled": true,
+    "request_fields_cleared": true,
+    "recheck_manifest_proof_disabled": true
+  }
+}
