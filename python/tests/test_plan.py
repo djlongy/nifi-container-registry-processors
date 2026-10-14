@@ -10,6 +10,7 @@ from fake_registry import FakeRegistry, digest
 
 import PlanRegistryTransfer as plan_module
 from PlanRegistryTransfer import PlanRegistryTransfer, parse_reference
+from container_registry_client import RegistryError
 
 
 class FlowFile:
@@ -189,7 +190,7 @@ class Refusals(PlanBase):
 
     def test_a_reference_that_is_neither_tag_nor_digest(self):
         for bad in ("team/app", "Team/App:1", "team/app@sha256:xyz", ""):
-            with self.assertRaises(Exception, msg=bad):
+            with self.assertRaisesRegex(RegistryError, "not a repository:tag or repository@sha256:digest reference", msg=bad):
                 parse_reference(bad)
 
     def test_a_reference_with_tag_and_digest(self):

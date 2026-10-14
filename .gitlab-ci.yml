@@ -8,6 +8,7 @@ include:
     inputs:
       instance: nifi-registry-processors
       stage: scan
+      policy-mode: blocking
       sarif-report-jobs: [{ job: 'python-test', artifacts: true }]
       sources: 'python/container_registry'
       exclusions: '.ci-tpl/**,.ci-artifacts/**'

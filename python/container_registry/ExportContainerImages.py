@@ -157,49 +157,71 @@ class ExportContainerImages(FlowFileTransform):
         entries = [e for e in re.split(r"[,\s]+", self._value(context, self.REPOSITORIES) or "") if e]
         return webhook_images(flowfile.getContentsAsBytes(), flowfile.getAttribute("X-Sha256"), client.host, entries)
 
+    def _client(self, context):
+        return RegistryClient(self._value(context, self.REGISTRY_URL), self._value(context, self.USERNAME),
+                              context.getProperty(self.PASSWORD).getValue(),
+                              trusted_der(context.getProperty(self.SSL_CONTEXT)),
+                              int(context.getProperty(self.TIMEOUT).getValue()),
+                              self._value(context, self.TRUSTED))
+
+    @staticmethod
+    def _batch(client, names):
+        """[(repository, tag, digest, repository, root, children, blobs)] for each named image, refused when a tag moved."""
+        batch = []
+        for repository, tag, digest in names:
+            if client.manifest_digest(repository, tag) != digest:
+                raise RegistryError(f"{repository}:{tag} is not at {digest} in {client.host}")
+            root, children, blobs = plan_image(client, repository, digest)
+            batch.append((repository, tag, digest, repository, root, children, blobs))
+        return batch
+
+    @staticmethod
+    def _check_size(groups, limit, per_image):
+        for group in groups:
+            total = bundle_bytes(image[6] for image in group)
+            if limit and total > limit:
+                raise RegistryError(f"{'an image holds' if per_image else 'the images hold'} {total} blob bytes, "
+                                    "over Max Export Size")
+
+    @staticmethod
+    def _write_groups(client, groups, directory, prefix, stamp, per_image, artifact_type):
+        """Write one tar per group and return each one's attributes; a failure removes every tar already written."""
+        written, outputs = [], []
+        try:
+            for n, group in enumerate(groups):
+                name = f"{prefix}{stamp}-{n:06d}.tar" if per_image else f"{prefix}{stamp}.tar"
+                written.append(name)
+                sha = write_export(client, os.path.join(directory, name), group)
+                triples = [(r, t, d) for r, t, d, *_ in group]
+                outputs.append({**export_attributes(directory, name, sha, client.host, artifact_type,
+                                                    [f"{r}:{t}@{d}" for r, t, d in triples]),
+                                **image_attributes(triples)})
+        except Exception:
+            for name in written:
+                for stale in (os.path.join(directory, name), os.path.join(directory, "." + name + ".partial")):
+                    if os.path.exists(stale):
+                        os.remove(stale)
+            raise
+        return outputs
+
+    def _export(self, context, flowfile, client):
+        names = self._request(context, flowfile, client)
+        batch = self._batch(client, names)
+        per_image = context.getProperty(self.TAR_PER_IMAGE).getValue() == "true"
+        groups = [[image] for image in batch] if per_image else [batch]
+        self._check_size(groups, parse_size(context.getProperty(self.MAX_SIZE).getValue()), per_image)
+        directory = self._value(context, self.OUTPUT_DIR)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        artifact_type = context.getProperty(self.ARTIFACT_TYPE).getValue()
+        os.makedirs(directory, exist_ok=True)
+        outputs = self._write_groups(client, groups, directory, context.getProperty(self.PREFIX).getValue(), stamp,
+                                     per_image, artifact_type)
+        return batch, per_image, artifact_type, directory, outputs
+
     def transform(self, context, flowfile):
         try:
-            client = RegistryClient(self._value(context, self.REGISTRY_URL), self._value(context, self.USERNAME),
-                                    context.getProperty(self.PASSWORD).getValue(),
-                                    trusted_der(context.getProperty(self.SSL_CONTEXT)),
-                                    int(context.getProperty(self.TIMEOUT).getValue()),
-                                    self._value(context, self.TRUSTED))
-            names = self._request(context, flowfile, client)
-            batch = []
-            for repository, tag, digest in names:
-                if client.manifest_digest(repository, tag) != digest:
-                    raise RegistryError(f"{repository}:{tag} is not at {digest} in {client.host}")
-                root, children, blobs = plan_image(client, repository, digest)
-                batch.append((repository, tag, digest, repository, root, children, blobs))
-            per_image = context.getProperty(self.TAR_PER_IMAGE).getValue() == "true"
-            groups = [[image] for image in batch] if per_image else [batch]
-            limit = parse_size(context.getProperty(self.MAX_SIZE).getValue())
-            for group in groups:
-                total = bundle_bytes(image[6] for image in group)
-                if limit and total > limit:
-                    raise RegistryError(f"{'an image holds' if per_image else 'the images hold'} {total} blob bytes, "
-                                        "over Max Export Size")
-            directory = self._value(context, self.OUTPUT_DIR)
-            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-            prefix = context.getProperty(self.PREFIX).getValue()
-            artifact_type = context.getProperty(self.ARTIFACT_TYPE).getValue()
-            os.makedirs(directory, exist_ok=True)
-            written, outputs = [], []
-            try:
-                for n, group in enumerate(groups):
-                    name = f"{prefix}{stamp}-{n:06d}.tar" if per_image else f"{prefix}{stamp}.tar"
-                    written.append(name)
-                    sha = write_export(client, os.path.join(directory, name), group)
-                    triples = [(r, t, d) for r, t, d, *_ in group]
-                    outputs.append({**export_attributes(directory, name, sha, client.host, artifact_type,
-                                                        [f"{r}:{t}@{d}" for r, t, d in triples]),
-                                    **image_attributes(triples)})
-            except Exception:
-                for name in written:
-                    for stale in (os.path.join(directory, name), os.path.join(directory, "." + name + ".partial")):
-                        if os.path.exists(stale):
-                            os.remove(stale)
-                raise
+            client = self._client(context)
+            batch, per_image, artifact_type, directory, outputs = self._export(context, flowfile, client)
         except Exception as error:
             self.logger.error(f"Export refused: {error}")
             return FlowFileTransformResult("failure", attributes={"registry.error": str(error)})
