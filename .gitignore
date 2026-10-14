@@ -1,4 +1,3 @@
-target/
 .agent/
 .agents/
 __pycache__/
