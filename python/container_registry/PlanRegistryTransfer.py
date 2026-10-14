@@ -48,6 +48,7 @@ class Plan:
         if len(self.blobs) + len(self.manifests) >= self.budget:
             raise RegistryError(f"{self.repository}:{self.tag or self.top} needs more than Maximum Jobs Per Transfer ({self.budget})")
         return {"kind": kind, "repository": self.repository, "digest": digest, "size": size, "mediaType": media_type,
+                "image": f"{self.repository}:{self.tag or self.top}",
                 "tag": "", "reference": digest, "layer": 0, "layers": 0, "platform": platform, "check": self.check,
                 "transfer": self.transfer, "needs": needs, **extra}
 
@@ -121,7 +122,7 @@ class PlanRegistryTransfer(FlowFileTransform):
         implements = ["org.apache.nifi.python.processor.FlowFileTransform"]
 
     class ProcessorDetails:
-        version = "1.5.0"
+        version = "1.5.1"
         description = ("Plans the transfer of container images: reads the manifests and indexes the FlowFile names from the "
                        "source registry and emits one JSON job list, {\"transfer.id\", \"jobs\"}, with a job per config, "
                        "layer, manifest and index. It never reads a blob. Split $.jobs with SplitJson and let native "

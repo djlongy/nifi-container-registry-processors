@@ -152,7 +152,7 @@ class ExpressionLanguageScope(enum.Enum):
 
 
 class PropertyDescriptor:
-    def __init__(self, name, description="", required=False, sensitive=False, default_value=None,
+    def __init__(self, name, description, required=False, sensitive=False, default_value=None,
                  allowable_values=None, validators=None, expression_language_scope=ExpressionLanguageScope.NONE,
                  dependencies=None, dynamic=False, controller_service_definition=None):
         self.name, self.required, self.sensitive = name, required, sensitive
