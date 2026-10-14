@@ -1,0 +1,336 @@
+{
+  "process_group": {
+    "name": "PLANALowSide"
+  },
+  "objects": [
+    {
+      "type": "processor",
+      "name": "ReceiveWebhook",
+      "processor_type": "org.apache.nifi.processors.standard.ListenHTTP",
+      "properties": {
+        "Base Path": "plana-webhook",
+        "Listening Port": "9617",
+        "HTTP Headers for Attributes": "(?i)(X-.*|Filename|Content-Type)",
+        "Return Code": "202",
+        "Maximum Thread Pool Size": "16"
+      },
+      "auto_terminated": [],
+      "bundle": {
+        "group": "org.apache.nifi",
+        "artifact": "nifi-standard-nar",
+        "version": "2.12.0"
+      }
+    },
+    {
+      "type": "processor",
+      "name": "PlanTransfer",
+      "processor_type": "PlanRegistryTransfer",
+      "properties": {
+        "Source Registry URL": "#{src_url}",
+        "Source Registry Username": "#{src_user}",
+        "Source Registry Password": "#{src_password}",
+        "Allowed Repositories": "#{allowed_repositories}",
+        "Platform Selection": "#{platforms}",
+        "Request Timeout": "120"
+      },
+      "auto_terminated": [
+        "original"
+      ],
+      "bundle": {
+        "group": "org.apache.nifi",
+        "artifact": "python-extensions",
+        "version": "1.5.1"
+      }
+    },
+    {
+      "type": "processor",
+      "name": "SplitJobs",
+      "processor_type": "org.apache.nifi.processors.standard.SplitJson",
+      "properties": {
+        "JsonPath Expression": "$.jobs"
+      },
+      "auto_terminated": [
+        "original"
+      ],
+      "bundle": {
+        "group": "org.apache.nifi",
+        "artifact": "nifi-standard-nar",
+        "version": "2.12.0"
+      }
+    },
+    {
+      "type": "processor",
+      "name": "RouteTransfer",
+      "processor_type": "RouteRegistryTransfer",
+      "properties": {
+        "Transfer Side": "Low",
+        "Registry URL": "#{src_url}",
+        "Registry Username": "#{src_user}",
+        "Registry Password": "#{src_password}"
+      },
+      "auto_terminated": [
+        "original"
+      ],
+      "bundle": {
+        "group": "org.apache.nifi",
+        "artifact": "python-extensions",
+        "version": "1.5.1"
+      }
+    },
+    {
+      "type": "processor",
+      "name": "FetchBlob",
+      "processor_type": "org.apache.nifi.processors.standard.InvokeHTTP",
+      "properties": {
+        "HTTP Method": "${registry.http.method}",
+        "HTTP URL": "${registry.http.url}",
+        "Request Body Enabled": "false",
+        "Request Content-Type": "${registry.http.media.type}",
+        "Authorization": "${registry.auth.header}",
+        "Response Header Request Attributes Enabled": "true",
+        "Response Header Request Attributes Prefix": "resp.",
+        "Response Body Ignored": "false",
+        "Response Redirects Enabled": "False",
+        "Connection Timeout": "30 secs",
+        "Socket Read Timeout": "10 mins",
+        "Socket Write Timeout": "10 mins"
+      },
+      "auto_terminated": [
+        "Original"
+      ],
+      "bundle": {
+        "group": "org.apache.nifi",
+        "artifact": "nifi-standard-nar",
+        "version": "2.12.0"
+      }
+    },
+    {
+      "type": "processor",
+      "name": "HashContent",
+      "processor_type": "org.apache.nifi.processors.standard.CryptographicHashContent",
+      "properties": {
+        "Hash Algorithm": "SHA-256",
+        "Fail When Content Empty": "false"
+      },
+      "auto_terminated": [],
+      "bundle": {
+        "group": "org.apache.nifi",
+        "artifact": "nifi-standard-nar",
+        "version": "2.12.0"
+      }
+    },
+    {
+      "type": "processor",
+      "name": "RetryTransfer",
+      "processor_type": "org.apache.nifi.processors.standard.RetryFlowFile",
+      "properties": {
+        "Retry Attribute": "registry.retries",
+        "Maximum Retries": "${registry.retry.max}",
+        "Penalize Retries": "true"
+      },
+      "auto_terminated": [],
+      "bundle": {
+        "group": "org.apache.nifi",
+        "artifact": "nifi-standard-nar",
+        "version": "2.12.0"
+      }
+    },
+    {
+      "type": "processor",
+      "name": "Hold",
+      "processor_type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+      "properties": {},
+      "auto_terminated": [
+        "success"
+      ],
+      "bundle": {
+        "group": "org.apache.nifi",
+        "artifact": "nifi-update-attribute-nar",
+        "version": "2.12.0"
+      }
+    },
+    {
+      "type": "output_port",
+      "name": "ToDiode"
+    },
+    {
+      "type": "connection",
+      "name": "ReceiveWebhookToPlanTransfer",
+      "source": "ReceiveWebhook",
+      "target": "PlanTransfer",
+      "relationships": [
+        "success"
+      ],
+      "back_pressure_data_size_threshold": "20 GB",
+      "back_pressure_object_threshold": 20
+    },
+    {
+      "type": "connection",
+      "name": "PlanTransferToSplitJobs",
+      "source": "PlanTransfer",
+      "target": "SplitJobs",
+      "relationships": [
+        "success"
+      ],
+      "back_pressure_data_size_threshold": "20 GB",
+      "back_pressure_object_threshold": 20
+    },
+    {
+      "type": "connection",
+      "name": "PlanTransferToHold",
+      "source": "PlanTransfer",
+      "target": "Hold",
+      "relationships": [
+        "failure"
+      ],
+      "back_pressure_data_size_threshold": "20 GB",
+      "back_pressure_object_threshold": 20
+    },
+    {
+      "type": "connection",
+      "name": "SplitJobsToRouteTransfer",
+      "source": "SplitJobs",
+      "target": "RouteTransfer",
+      "relationships": [
+        "split"
+      ],
+      "back_pressure_data_size_threshold": "20 GB",
+      "back_pressure_object_threshold": 20
+    },
+    {
+      "type": "connection",
+      "name": "SplitJobsToHold",
+      "source": "SplitJobs",
+      "target": "Hold",
+      "relationships": [
+        "failure"
+      ],
+      "back_pressure_data_size_threshold": "20 GB",
+      "back_pressure_object_threshold": 20
+    },
+    {
+      "type": "connection",
+      "name": "RouteTransferToFetchBlob",
+      "source": "RouteTransfer",
+      "target": "FetchBlob",
+      "relationships": [
+        "http"
+      ],
+      "back_pressure_data_size_threshold": "20 GB",
+      "back_pressure_object_threshold": 20
+    },
+    {
+      "type": "connection",
+      "name": "RouteTransferToHashContent",
+      "source": "RouteTransfer",
+      "target": "HashContent",
+      "relationships": [
+        "hash"
+      ],
+      "back_pressure_data_size_threshold": "20 GB",
+      "back_pressure_object_threshold": 20
+    },
+    {
+      "type": "connection",
+      "name": "RouteTransferToToDiode",
+      "source": "RouteTransfer",
+      "target": "ToDiode",
+      "relationships": [
+        "ready"
+      ],
+      "back_pressure_data_size_threshold": "20 GB",
+      "back_pressure_object_threshold": 20
+    },
+    {
+      "type": "connection",
+      "name": "RouteTransferToRetryTransfer",
+      "source": "RouteTransfer",
+      "target": "RetryTransfer",
+      "relationships": [
+        "retry"
+      ],
+      "back_pressure_data_size_threshold": "20 GB",
+      "back_pressure_object_threshold": 20
+    },
+    {
+      "type": "connection",
+      "name": "RouteTransferToHold",
+      "source": "RouteTransfer",
+      "target": "Hold",
+      "relationships": [
+        "failure"
+      ],
+      "back_pressure_data_size_threshold": "20 GB",
+      "back_pressure_object_threshold": 20
+    },
+    {
+      "type": "connection",
+      "name": "FetchBlobToRouteTransfer",
+      "source": "FetchBlob",
+      "target": "RouteTransfer",
+      "relationships": [
+        "Response"
+      ],
+      "back_pressure_data_size_threshold": "20 GB",
+      "back_pressure_object_threshold": 20
+    },
+    {
+      "type": "connection",
+      "name": "FetchBlobToRouteTransfer",
+      "source": "FetchBlob",
+      "target": "RouteTransfer",
+      "relationships": [
+        "Failure",
+        "No Retry",
+        "Retry"
+      ],
+      "back_pressure_data_size_threshold": "20 GB",
+      "back_pressure_object_threshold": 20
+    },
+    {
+      "type": "connection",
+      "name": "HashContentToRouteTransfer",
+      "source": "HashContent",
+      "target": "RouteTransfer",
+      "relationships": [
+        "success"
+      ],
+      "back_pressure_data_size_threshold": "20 GB",
+      "back_pressure_object_threshold": 20
+    },
+    {
+      "type": "connection",
+      "name": "HashContentToHold",
+      "source": "HashContent",
+      "target": "Hold",
+      "relationships": [
+        "failure"
+      ],
+      "back_pressure_data_size_threshold": "20 GB",
+      "back_pressure_object_threshold": 20
+    },
+    {
+      "type": "connection",
+      "name": "RetryTransferToRouteTransfer",
+      "source": "RetryTransfer",
+      "target": "RouteTransfer",
+      "relationships": [
+        "retry"
+      ],
+      "back_pressure_data_size_threshold": "20 GB",
+      "back_pressure_object_threshold": 20
+    },
+    {
+      "type": "connection",
+      "name": "RetryTransferToHold",
+      "source": "RetryTransfer",
+      "target": "Hold",
+      "relationships": [
+        "retries_exceeded",
+        "failure"
+      ],
+      "back_pressure_data_size_threshold": "20 GB",
+      "back_pressure_object_threshold": 20
+    }
+  ]
+}

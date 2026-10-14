@@ -1,0 +1,169 @@
+{
+  "process_group": {
+    "name": "PLANAHighSide"
+  },
+  "objects": [
+    {
+      "type": "input_port",
+      "name": "FromDiode"
+    },
+    {
+      "type": "processor",
+      "name": "RouteTransfer",
+      "processor_type": "RouteRegistryTransfer",
+      "properties": {
+        "Transfer Side": "High",
+        "Registry URL": "#{dst_url}",
+        "Registry Username": "#{dst_user}",
+        "Registry Password": "#{dst_password}",
+        "Target Repository": "#{dst_repository}"
+      },
+      "auto_terminated": [
+        "ready",
+        "original"
+      ],
+      "bundle": {
+        "group": "org.apache.nifi",
+        "artifact": "python-extensions",
+        "version": "1.5.1"
+      }
+    },
+    {
+      "type": "processor",
+      "name": "UploadContent",
+      "processor_type": "org.apache.nifi.processors.standard.InvokeHTTP",
+      "properties": {
+        "HTTP Method": "${registry.http.method}",
+        "HTTP URL": "${registry.http.url}",
+        "Request Body Enabled": "true",
+        "Request Content-Type": "${registry.http.media.type}",
+        "Authorization": "${registry.auth.header}",
+        "Response Header Request Attributes Enabled": "true",
+        "Response Header Request Attributes Prefix": "resp.",
+        "Response Body Ignored": "true",
+        "Response Redirects Enabled": "False",
+        "Connection Timeout": "30 secs",
+        "Socket Read Timeout": "10 mins",
+        "Socket Write Timeout": "10 mins"
+      },
+      "auto_terminated": [
+        "Response"
+      ],
+      "bundle": {
+        "group": "org.apache.nifi",
+        "artifact": "nifi-standard-nar",
+        "version": "2.12.0"
+      }
+    },
+    {
+      "type": "processor",
+      "name": "RetryTransfer",
+      "processor_type": "org.apache.nifi.processors.standard.RetryFlowFile",
+      "properties": {
+        "Retry Attribute": "registry.retries",
+        "Maximum Retries": "${registry.retry.max}",
+        "Penalize Retries": "true"
+      },
+      "auto_terminated": [],
+      "bundle": {
+        "group": "org.apache.nifi",
+        "artifact": "nifi-standard-nar",
+        "version": "2.12.0"
+      }
+    },
+    {
+      "type": "processor",
+      "name": "Hold",
+      "processor_type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+      "properties": {},
+      "auto_terminated": [
+        "success"
+      ],
+      "bundle": {
+        "group": "org.apache.nifi",
+        "artifact": "nifi-update-attribute-nar",
+        "version": "2.12.0"
+      }
+    },
+    {
+      "type": "connection",
+      "name": "FromDiodeToRouteTransfer",
+      "source": "FromDiode",
+      "target": "RouteTransfer",
+      "relationships": [],
+      "back_pressure_data_size_threshold": "20 GB",
+      "back_pressure_object_threshold": 20
+    },
+    {
+      "type": "connection",
+      "name": "RouteTransferToUploadContent",
+      "source": "RouteTransfer",
+      "target": "UploadContent",
+      "relationships": [
+        "http"
+      ],
+      "back_pressure_data_size_threshold": "20 GB",
+      "back_pressure_object_threshold": 20
+    },
+    {
+      "type": "connection",
+      "name": "RouteTransferToRetryTransfer",
+      "source": "RouteTransfer",
+      "target": "RetryTransfer",
+      "relationships": [
+        "retry"
+      ],
+      "back_pressure_data_size_threshold": "20 GB",
+      "back_pressure_object_threshold": 20
+    },
+    {
+      "type": "connection",
+      "name": "RouteTransferToHold",
+      "source": "RouteTransfer",
+      "target": "Hold",
+      "relationships": [
+        "failure",
+        "hash"
+      ],
+      "back_pressure_data_size_threshold": "20 GB",
+      "back_pressure_object_threshold": 20
+    },
+    {
+      "type": "connection",
+      "name": "UploadContentToRouteTransfer",
+      "source": "UploadContent",
+      "target": "RouteTransfer",
+      "relationships": [
+        "Original",
+        "No Retry",
+        "Retry",
+        "Failure"
+      ],
+      "back_pressure_data_size_threshold": "20 GB",
+      "back_pressure_object_threshold": 20
+    },
+    {
+      "type": "connection",
+      "name": "RetryTransferToRouteTransfer",
+      "source": "RetryTransfer",
+      "target": "RouteTransfer",
+      "relationships": [
+        "retry"
+      ],
+      "back_pressure_data_size_threshold": "20 GB",
+      "back_pressure_object_threshold": 20
+    },
+    {
+      "type": "connection",
+      "name": "RetryTransferToHold",
+      "source": "RetryTransfer",
+      "target": "Hold",
+      "relationships": [
+        "retries_exceeded",
+        "failure"
+      ],
+      "back_pressure_data_size_threshold": "20 GB",
+      "back_pressure_object_threshold": 20
+    }
+  ]
+}
