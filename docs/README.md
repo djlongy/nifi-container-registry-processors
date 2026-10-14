@@ -1,5 +1,7 @@
 # Documentation map
 
+For **PLANA compact native streaming**, start with [the complete by-hand build and live layout screenshots](runbooks/nifi-by-hand-compact-layer-flow.md). It lists every property, relationship, connection, context and recovery step.
+
 Start with [QUICKSTART.md](../QUICKSTART.md) to push one image. The [top-level README](../README.md) has the property tables, flows and migration table.
 
 Claims about NiFi behaviour in `decisions/` and `runbooks/testing-checklist.md` are marked "Unverified until tested" until they have been run on a real NiFi; the storage, disk, restart-leftover and Tar Per Image claims carry their lab measurements (NiFi 2.11, 9.66 GB image). Facts quoted from the NiFi 2.x documentation say so.
@@ -12,6 +14,7 @@ Claims about NiFi behaviour in `decisions/` and `runbooks/testing-checklist.md` 
 | [decisions/adr-0004-one-bundle-vs-tar-per-image.md](decisions/adr-0004-one-bundle-vs-tar-per-image.md) | One tar for the webhook, or one tar per image |
 | [decisions/adr-0005-webhook-trust.md](decisions/adr-0005-webhook-trust.md) | What the webhook is trusted for, and what its headers are not |
 | [decisions/adr-0006-moving-large-images-through-nifi.md](decisions/adr-0006-moving-large-images-through-nifi.md) | Why Python cannot stream, and the four proven options (staging dir, layer per FlowFile, loopback ListenHTTP, push from stdin) |
+| [runbooks/nifi-by-hand-compact-layer-flow.md](runbooks/nifi-by-hand-compact-layer-flow.md) | PLANA: complete 12-processor build, low/high screenshots, all properties and connections |
 | [runbooks/nifi-by-hand.md](runbooks/nifi-by-hand.md) | Click-by-click build of the webhook flow in the NiFi 2.x UI |
 | [runbooks/nifi-by-hand-o4-push.md](runbooks/nifi-by-hand-o4-push.md) | Click-by-click O4 flow: ExecuteStreamCommand running `python/scripts/push_from_stdin.py` |
 | [runbooks/nifi-by-hand-o2-layer-flow.md](runbooks/nifi-by-hand-o2-layer-flow.md) | O2 flow: one FlowFile per layer with InvokeHTTP, a manifest gate and layer recovery |
