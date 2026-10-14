@@ -12,6 +12,8 @@ from nifi_attributes import Attributes, evaluate
 from container_registry_client import (DIGEST, FOREIGN_LAYERS, REPOSITORY, TAG, RegistryClient, RegistryError,
                                        _manifest_type, allowed, trusted_der, webhook_images)
 
+LIST_SPLIT = r"[,\s]+"
+TRANSFER_ID = "transfer.id"
 REFERENCE = re.compile(r"(?P<repository>[^:@]+)(?::(?P<tag>[^@]+))?(?:@(?P<digest>[^@]+))?")
 
 
@@ -57,19 +59,25 @@ class Plan:
         media_type = _manifest_type(raw, content_type)
         body = base64.b64encode(raw).decode()
         if "manifests" in document:
-            if depth >= self.max_depth:
-                raise RegistryError(f"{self.repository}@{self.top}: indexes nested deeper than Maximum Manifest Depth ({self.max_depth})")
-            children = [(c, platform_of(c)) for c in document["manifests"]]
-            for child, child_platform in children:
-                if not DIGEST.fullmatch(child.get("digest", "")):
-                    raise RegistryError(f"unsupported child digest {child.get('digest')}")
-                if self.wanted(child_platform) and child["digest"] not in self.manifests:
-                    child_raw, child_type = self.client.get_manifest(self.repository, child["digest"])
-                    self.walk(child["digest"], child_raw, child_type, child_platform, depth + 1)
-            if not self.selection:  # a filtered copy cannot keep the index: it names platforms that are not sent
-                needs = [c["digest"] for c, p in children]
-                self.manifests[digest] = self.job("index", digest, len(raw), media_type, "-", needs, body=body)
-            return
+            self._walk_index(digest, raw, document, media_type, body, depth)
+        else:
+            self._walk_image(digest, raw, document, media_type, body, platform)
+
+    def _walk_index(self, digest, raw, document, media_type, body, depth):
+        if depth >= self.max_depth:
+            raise RegistryError(f"{self.repository}@{self.top}: indexes nested deeper than Maximum Manifest Depth ({self.max_depth})")
+        children = [(c, platform_of(c)) for c in document["manifests"]]
+        for child, child_platform in children:
+            if not DIGEST.fullmatch(child.get("digest", "")):
+                raise RegistryError(f"unsupported child digest {child.get('digest')}")
+            if self.wanted(child_platform) and child["digest"] not in self.manifests:
+                child_raw, child_type = self.client.get_manifest(self.repository, child["digest"])
+                self.walk(child["digest"], child_raw, child_type, child_platform, depth + 1)
+        if not self.selection:  # a filtered copy cannot keep the index: it names platforms that are not sent
+            needs = [c["digest"] for c, p in children]
+            self.manifests[digest] = self.job("index", digest, len(raw), media_type, "-", needs, body=body)
+
+    def _walk_image(self, digest, raw, document, media_type, body, platform):
         config, layers = document["config"], document.get("layers") or []
         self.add_blob("config", config["digest"], config["size"], config["mediaType"], platform, 0, len(layers))
         needs = [config["digest"]]
@@ -223,7 +231,7 @@ class PlanRegistryTransfer(FlowFileTransform):
         if not text:
             return None
         try:
-            layers = {int(n) for n in re.split(r"[,\s]+", text.strip()) if n}
+            layers = {int(n) for n in re.split(LIST_SPLIT, text.strip()) if n}
         except ValueError:
             raise RegistryError(f"registry.layers must be layer numbers such as 2,3: {text!r}")
         check = (flowfile.getAttribute("registry.check") or "").strip()
@@ -243,38 +251,54 @@ class PlanRegistryTransfer(FlowFileTransform):
             raise RegistryError(f"{label} has no layer {missing[0]}: it has {max([j['layers'] for j in blobs] or [0])}")
         return [j for j in blobs if j["kind"] == "config" or j["layer"] in resend["layers"]]
 
+    def _client(self, context):
+        return RegistryClient(self._value(context, self.REGISTRY_URL), self._value(context, self.USERNAME),
+                              context.getProperty(self.PASSWORD).getValue(),
+                              trusted_der(context.getProperty(self.SSL_CONTEXT)),
+                              int(context.getProperty(self.TIMEOUT).getValue()))
+
+    def _selection(self, context, resend):
+        """Platforms to plan: the resend's platform when it names one, else Platform Selection ([] for all)."""
+        selection = [s for s in re.split(LIST_SPLIT, self._value(context, self.PLATFORMS) or "all") if s]
+        selection = [] if "all" in selection else selection
+        return [resend["platform"]] if resend and resend["platform"] else selection
+
+    @staticmethod
+    def _resolve(client, repository, tag, digest):
+        """The digest to plan: the tag's current one, or the pinned digest; refused when either is not in the registry."""
+        found = client.manifest_digest(repository, tag) if tag else digest
+        if found is None or (digest and found != digest):
+            raise RegistryError(f"{repository}:{tag} is not at {digest or 'any digest'} in {client.host}")
+        return found
+
+    def _plan(self, context, client, flowfile, transfer):
+        entries = [e for e in re.split(LIST_SPLIT, self._value(context, self.REPOSITORIES) or "") if e]
+        resend = self._resend(flowfile)
+        selection = self._selection(context, resend)
+        images = self._images(flowfile, entries, client.host)
+        if resend and len(images) != 1:
+            raise RegistryError("registry.layers resends one image: the request names " + str(len(images)))
+        jobs = []
+        for repository, tag, digest in images:
+            found = self._resolve(client, repository, tag, digest)
+            plan = Plan(client, repository, tag, found, transfer, selection,
+                        int(context.getProperty(self.MAX_DEPTH).getValue()),
+                        int(context.getProperty(self.MAX_JOBS).getValue()))
+            jobs += plan.jobs()
+            if resend:
+                jobs = self._layers_only(jobs, resend, plan.check, f"{repository}:{tag or found}")
+        return jobs
+
     def transform(self, context, flowfile):
         try:
-            client = RegistryClient(self._value(context, self.REGISTRY_URL), self._value(context, self.USERNAME),
-                                    context.getProperty(self.PASSWORD).getValue(),
-                                    trusted_der(context.getProperty(self.SSL_CONTEXT)),
-                                    int(context.getProperty(self.TIMEOUT).getValue()))
-            entries = [e for e in re.split(r"[,\s]+", self._value(context, self.REPOSITORIES) or "") if e]
-            selection = [s for s in re.split(r"[,\s]+", self._value(context, self.PLATFORMS) or "all") if s]
-            selection = [] if "all" in selection else selection
-            transfer = flowfile.getAttribute("transfer.id") or str(uuid.uuid4())
-            resend = self._resend(flowfile)
-            if resend:
-                selection = [resend["platform"]] if resend["platform"] else selection
-            images = self._images(flowfile, entries, client.host)
-            if resend and len(images) != 1:
-                raise RegistryError("registry.layers resends one image: the request names " + str(len(images)))
-            jobs = []
-            for repository, tag, digest in images:
-                found = client.manifest_digest(repository, tag) if tag else digest
-                if found is None or (digest and found != digest):
-                    raise RegistryError(f"{repository}:{tag} is not at {digest or 'any digest'} in {client.host}")
-                plan = Plan(client, repository, tag, found, transfer, selection,
-                            int(context.getProperty(self.MAX_DEPTH).getValue()),
-                            int(context.getProperty(self.MAX_JOBS).getValue()))
-                jobs += plan.jobs()
-                if resend:
-                    jobs = self._layers_only(jobs, resend, plan.check, f"{repository}:{tag or found}")
+            client = self._client(context)
+            transfer = flowfile.getAttribute(TRANSFER_ID) or str(uuid.uuid4())
+            jobs = self._plan(context, client, flowfile, transfer)
         except Exception as error:
             self.logger.error(f"Plan refused: {error}")
             return FlowFileTransformResult("failure", attributes={"registry.error": str(error)})
         self.logger.info(f"Planned {len(jobs)} job(s) for transfer {transfer} from {client.host}")
         return FlowFileTransformResult(
-            "success", contents=json.dumps({"transfer.id": transfer, "jobs": jobs}).encode(),
-            attributes={"transfer.id": transfer, "planner.job.count": str(len(jobs)),
+            "success", contents=json.dumps({TRANSFER_ID: transfer, "jobs": jobs}).encode(),
+            attributes={TRANSFER_ID: transfer, "planner.job.count": str(len(jobs)),
                         "mime.type": "application/json"})
