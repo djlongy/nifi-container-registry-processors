@@ -156,6 +156,7 @@ class PropertyDescriptor:
                  allowable_values=None, validators=None, expression_language_scope=ExpressionLanguageScope.NONE,
                  dependencies=None, dynamic=False, controller_service_definition=None):
         self.name, self.required, self.sensitive = name, required, sensitive
+        self.description, self.allowable_values = description, allowable_values
         self.default_value, self.dynamic = default_value, dynamic
         self.expression_language_scope = expression_language_scope
 

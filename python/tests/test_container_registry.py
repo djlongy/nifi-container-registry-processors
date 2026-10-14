@@ -37,15 +37,15 @@ class Discovery(unittest.TestCase):
                 and getattr(n.value.func, "id", None) == "PropertyDescriptor" for kw in n.value.keywords if kw.arg == "name"]
 
     def test_pull(self):
-        self.assertIn("Output Directory", self.properties("PullContainerImages"))
+        self.assertIn("Tar Output Directory", self.properties("PullContainerImages"))
         self.assertEqual(len(self.properties("PullContainerImages")), 20)
 
     def test_export(self):
-        self.assertIn("Repositories", self.properties("ExportContainerImages"))
-        self.assertEqual(len(self.properties("ExportContainerImages")), 11)
+        self.assertIn("Allowed Repositories", self.properties("ExportContainerImages"))
+        self.assertEqual(len(self.properties("ExportContainerImages")), 12)
 
     def test_push(self):
-        self.assertIn("Tar File", self.properties("PushContainerImages"))
+        self.assertIn("Input Tar Path", self.properties("PushContainerImages"))
         self.assertEqual(len(self.properties("PushContainerImages")), 11)
 
 
