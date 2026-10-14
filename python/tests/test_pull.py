@@ -19,8 +19,8 @@ def make_pull(registry, directory, values=None, state=None, **dynamic):
     pull_module.RegistryClient = lambda *args, **kwargs: registry
     processor = PullContainerImages()
     processor.logger = nifi_stub.Logger()
-    settings = {"Registry URL": "https://registry.test", "Image Source": "Image List", "Image List": "team/app:1.0",
-                "Output Directory": directory}
+    settings = {"Source Registry URL": "https://registry.test", "Image Source": "Image List", "Image List": "team/app:1.0",
+                "Tar Output Directory": directory}
     settings.update(values or {})
     context = nifi_stub.FakeContext(PullContainerImages.PROPERTIES, settings, dynamic, state)
     return processor, context
@@ -183,7 +183,7 @@ class Collision(unittest.TestCase):
         registry.add_image("a/app", "v1", "a")
         registry.add_image("b/app", "v1", "b")
         processor, context = make_pull(registry, tempfile.mkdtemp(), {
-            "Image List": "a/app:v1\nb/app:v1", "Rewrite Base Path": "merged"})
+            "Image List": "a/app:v1\nb/app:v1", "Rewrite Target Base Path": "merged"})
         result = processor.create(context)
         self.assertEqual(len(result.attributes["registry.images"].splitlines()), 1)
         self.assertIn("already ends at merged/app:v1", processor.logger.text())
@@ -197,7 +197,7 @@ class CollisionAcrossRuns(unittest.TestCase):
         self.registry.add_image("b/app", "v1", "b")
         self.directory = tempfile.mkdtemp()
         self.processor, self.context = make_pull(self.registry, self.directory, {
-            "Image List": "a/app:v1\nb/app:v1", "Rewrite Base Path": "merged"})
+            "Image List": "a/app:v1\nb/app:v1", "Rewrite Target Base Path": "merged"})
 
     def test_the_second_run_does_not_export_the_colliding_image(self):
         first = self.processor.create(self.context)
@@ -258,7 +258,7 @@ class EnvironmentScope(unittest.TestCase):
         processor = PullContainerImages()
         processor.logger = nifi_stub.Logger()
         context = nifi_stub.FakeContext(PullContainerImages.PROPERTIES, {
-            "Registry URL": "${TEST_PULL_ENV_HOST}/artifactory/api/docker/repo", "Output Directory": tempfile.mkdtemp()})
+            "Source Registry URL": "${TEST_PULL_ENV_HOST}/artifactory/api/docker/repo", "Tar Output Directory": tempfile.mkdtemp()})
         with self.assertRaises(RuntimeError):
             processor.create(context)
         self.assertEqual(seen[0][0], "https://artifactory.low/artifactory/api/docker/repo")
@@ -271,7 +271,7 @@ class EnvironmentScope(unittest.TestCase):
         processor = PullContainerImages()
         processor.logger = nifi_stub.Logger()
         context = nifi_stub.FakeContext(PullContainerImages.PROPERTIES, {
-            "Registry URL": "${TEST_PULL_ENV_URL}", "Output Directory": tempfile.mkdtemp()})
+            "Source Registry URL": "${TEST_PULL_ENV_URL}", "Tar Output Directory": tempfile.mkdtemp()})
         with self.assertRaises(RuntimeError):
             processor.create(context)
         self.assertEqual(seen[0][0], "http://registry.low:5000")

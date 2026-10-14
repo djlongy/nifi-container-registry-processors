@@ -10,8 +10,8 @@ from nifiapi.properties import ExpressionLanguageScope, PropertyDescriptor, Stan
 from nifiapi.relationship import Relationship
 
 from nifi_attributes import Attributes, evaluate
-from container_registry_client import (DIGEST, REPOSITORY, TAG, RegistryClient, RegistryError, export_attributes,
-                                       parse_size, plan_image, trusted_der, write_export)
+from container_registry_client import (DIGEST, REPOSITORY, TAG, RegistryClient, RegistryError, bundle_bytes,
+                                       export_attributes, parse_size, plan_image, trusted_der, write_export)
 
 
 def host_of(registry):
@@ -23,62 +23,136 @@ def allowed(repository, entries):
     return any(repository.startswith(e[:-1]) if e.endswith("*") else repository == e for e in entries)
 
 
+def image_attributes(images):
+    """registry.image.count and registry.image.N.repository, .tag and .digest for [(repository, tag, digest)]."""
+    attributes = {"registry.image.count": str(len(images))}
+    for n, (repository, tag, digest) in enumerate(images):
+        attributes.update({f"registry.image.{n}.repository": repository, f"registry.image.{n}.tag": tag,
+                           f"registry.image.{n}.digest": digest})
+    return attributes
+
+
 @use_case(description="Export the images a gitlab-registry-mirror webhook names from a registry for a data diode.",
           configuration="""ListenHTTP, then RouteOnAttribute on X-Artifact-Type equals container-images-request, then this
-          processor with Registry URL, Repositories and Output Directory. Send success to PushContainerImages with Tar
-          File set to the Output Directory plus /${filename}.""",
+          processor with Source Registry URL, Allowed Repositories and Tar Output Directory (Tar Per Image false: one tar). Send success to PushContainerImages with Tar
+          File set to the Tar Output Directory plus /${filename}.""",
           keywords=["container", "diode", "registry", "export", "webhook"])
 class ExportContainerImages(FlowFileTransform):
     class Java:
         implements = ["org.apache.nifi.python.processor.FlowFileTransform"]
 
     class ProcessorDetails:
-        version = "2.0.0"
-        description = ("Exports the images a gitlab-registry-mirror webhook names as one mirror.py export tar in Output "
-                       "Directory. The body only selects images: it must match X-Sha256, name the host of Registry URL "
-                       "and repositories in Repositories, and every digest must be the one the registry resolves now. "
-                       "Any other body fails the FlowFile and exports nothing.")
+        version = "1.5.0"
+        description = ("Exports the images a gitlab-registry-mirror webhook names as one mirror.py export tar in Tar Output "
+                       "Directory, on this node's local disk. The body only selects images: it must match the X-Sha256 "
+                       "attribute, name the host of Source Registry URL and repositories in Allowed Repositories, and every "
+                       "digest must be the one the registry resolves now. Any other body fails the FlowFile and exports "
+                       "nothing. PushContainerImages must run on the same node, or the directory must be shared storage.")
         tags = ["container", "image", "oci", "docker", "registry", "export", "diode", "webhook"]
 
-    REGISTRY_URL = PropertyDescriptor(name="Registry URL", description="The registry to export from: https://registry.example.internal, or "
-                         "https://<host>/artifactory/api/docker/<repo-key> for Artifactory.", required=True,
-                         validators=[StandardValidators.URL_VALIDATOR],
-                         expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
-    USERNAME = PropertyDescriptor(name="Username", description="Registry user. Empty: anonymous.",
-                     expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
-    PASSWORD = PropertyDescriptor(name="Password", description="Registry password or token.", sensitive=True)
-    SSL_CONTEXT = PropertyDescriptor(name="SSL Context Service", description="The truststore whose CAs are trusted in addition to the system "
-                    "store and SSL_CERT_FILE, for the registry and the Ledger URL.",
-                    controller_service_definition="org.apache.nifi.ssl.SSLContextProvider")
-    TRUSTED = PropertyDescriptor(name="Trusted Storage Hosts", description="Comma separated host names, addresses or CIDR ranges "
-                    "(10.0.0.0/8) that the registry may redirect blob downloads and uploads to although they are not public "
-                    "addresses, such as an on-premises MinIO. Anything else the registry names that is loopback, link-local, "
-                    "private or plain http from an https registry is refused. The registry's own host is always allowed at the addresses its name resolves to.")
-    REPOSITORIES = PropertyDescriptor(name="Repositories", description="The repositories a webhook may export, separated by commas or "
-                         "new lines. An entry ending in * is a prefix, such as team/*. Any other repository fails the FlowFile.",
-                         required=True, expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
-    OUTPUT_DIR = PropertyDescriptor(name="Output Directory", description="Where the tar is written. It must hold the largest export.",
-                       required=True, expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
-    PREFIX = PropertyDescriptor(name="Filename Prefix", description="Start of each tar's name.", required=True, default_value="container-images-")
-    ARTIFACT_TYPE = PropertyDescriptor(name="Artifact Type", description="The X-Artifact-Type attribute.", required=True,
-                          default_value="container-images")
-    MAX_SIZE = PropertyDescriptor(name="Max Export Size", description="The most blob bytes one tar holds, such as 20 GB. The rest go in the next "
-                     "run. An image larger than this goes alone. Empty: no limit.",
-                     validators=[StandardValidators.DATA_SIZE_VALIDATOR])
-    TIMEOUT = PropertyDescriptor(name="Request Timeout", description="Seconds a registry read may stall.", required=True, default_value="600",
-                    validators=[StandardValidators.POSITIVE_INTEGER_VALIDATOR])
+    REGISTRY_URL = PropertyDescriptor(
+        name="Source Registry URL",
+        description=(
+            "Registry to read images from, such as https://registry.example.com, or "
+            "https://host/artifactory/api/docker/repo-key for Artifactory. No user:password in the "
+            "URL. Required, no default. Environment variables allowed: ${REGISTRY_URL}."),
+        required=True,
+        validators=[StandardValidators.URL_VALIDATOR],
+        expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
+    USERNAME = PropertyDescriptor(
+        name="Source Registry Username",
+        description=(
+            "User for the source registry. Empty (default): anonymous access, which works only on a "
+            "registry that allows it. Environment variables allowed: ${REGISTRY_USER}."),
+        expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
+    PASSWORD = PropertyDescriptor(
+        name="Source Registry Password",
+        description=(
+            "Password or access token for the source registry. Empty (default): none sent. Sensitive:"
+            " reference a parameter, such as #{registry_password}."),
+        sensitive=True)
+    SSL_CONTEXT = PropertyDescriptor(
+        name="SSL Context Service",
+        description=(
+            "A StandardSSLContextService whose PKCS12 or JKS truststore holds the registry's CA (it "
+            "does not accept PEM). Its CAs add to the system store and SSL_CERT_FILE. Empty "
+            "(default): only those are trusted. Its keystore is ignored."),
+        controller_service_definition="org.apache.nifi.ssl.SSLContextProvider")
+    TRUSTED = PropertyDescriptor(
+        name="Trusted Storage Hosts",
+        description=(
+            "Hosts, IPs or CIDR ranges the registry may redirect blob transfers to although they are "
+            "private, such as an on-premises MinIO: minio.internal, 10.20.0.0/16. Empty (default): "
+            "private, loopback, link-local and http-from-https redirects are refused. The registry's "
+            "own host is always allowed."))
+    REPOSITORIES = PropertyDescriptor(
+        name="Allowed Repositories",
+        description=(
+            "Allowlist, not the selection: the webhook body picks the images and each must be in "
+            "here. Comma or new line separated: team/app, or team/* for a prefix, * for all. "
+            "Required. Any other repository fails the FlowFile."),
+        required=True,
+        expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
+    OUTPUT_DIR = PropertyDescriptor(
+        name="Tar Output Directory",
+        description=(
+            "Local directory on this node for the tars, such as /data/out. Set it from a parameter, "
+            "#{container-images.tar.dir}. Use a per-node volume, same path on every node, outside "
+            "NiFi's repositories. Trap: Push reads it by path: keep the connection not load-balanced,"
+            " or use shared storage."),
+        required=True,
+        expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
+    PREFIX = PropertyDescriptor(
+        name="Tar Filename Prefix",
+        description=(
+            "Start of each tar's file name, followed by the UTC time and .tar, such as container-"
+            "images-20260101T000000000000Z.tar. Default container-images-. Pull treats any such file "
+            "left in Tar Output Directory as its own, so keep it unique there."),
+        required=True,
+        default_value="container-images-")
+    ARTIFACT_TYPE = PropertyDescriptor(
+        name="X-Artifact-Type Value",
+        description=(
+            "Value of the X-Artifact-Type attribute on the output FlowFile, which a RouteOnAttribute "
+            "downstream matches. Default container-images, the value the Push route expects. Change "
+            "it only together with that route."),
+        required=True,
+        default_value="container-images")
+    MAX_SIZE = PropertyDescriptor(
+        name="Max Export Size",
+        description=(
+            "Most blob bytes in one tar, such as 20 GB; a layer shared by two images counts once. "
+            "More fails the whole webhook, nothing is split. Empty (default): no limit."),
+        validators=[StandardValidators.DATA_SIZE_VALIDATOR])
+    TAR_PER_IMAGE = PropertyDescriptor(
+        name="Tar Per Image",
+        description=(
+            "Default false: one tar for the webhook, shared layers once. true: one tar per image; layers repeat, "
+            "so more bytes cross the diode (1.92x with 2 images sharing 4 of 5 layers). The FlowFile then "
+            "holds one JSON line per tar, for SplitText."),
+        required=True,
+        allowable_values=["true", "false"],
+        default_value="false")
+    TIMEOUT = PropertyDescriptor(
+        name="Request Timeout",
+        description=(
+            "Seconds a registry read may stall before it fails. Default 600 (10 minutes). Blobs "
+            "stream, so this is a stall limit, not a limit on the total time."),
+        required=True,
+        default_value="600",
+        validators=[StandardValidators.POSITIVE_INTEGER_VALIDATOR])
 
 
     PROPERTIES = [REGISTRY_URL, USERNAME, PASSWORD, SSL_CONTEXT, TRUSTED, REPOSITORIES, OUTPUT_DIR, PREFIX, ARTIFACT_TYPE,
-                  MAX_SIZE, TIMEOUT]
+                  MAX_SIZE, TAR_PER_IMAGE, TIMEOUT]
 
     def __init__(self, **kwargs):
         super().__init__()
 
     def getRelationships(self):
-        return [Relationship("success", "A FlowFile naming the export tar written to Output Directory"),
-                Relationship("failure", "The webhook was refused or the export failed; registry.error says why, nothing was exported"),
-                Relationship("original", "The incoming FlowFile", auto_terminated=True)]
+        return [Relationship("success", "Empty FlowFile whose filename and absolute.path attributes name the tar written to Tar Output Directory"),
+                Relationship("failure", "The webhook was refused or the export failed; the registry.error attribute says why. Nothing was exported"),
+                Relationship("original", "The incoming webhook FlowFile, unchanged. Auto-terminated by default", auto_terminated=True)]
 
     def getPropertyDescriptors(self):
         return self.PROPERTIES
@@ -107,7 +181,7 @@ class ExportContainerImages(FlowFileTransform):
         entries = [e for e in re.split(r"[,\s]+", self._value(context, self.REPOSITORIES) or "") if e]
         for repository, tag, digest in names:
             if not allowed(repository, entries):
-                raise RegistryError(f"{repository} is not in Repositories")
+                raise RegistryError(f"{repository} is not in Allowed Repositories")
             if not (REPOSITORY.fullmatch(repository) and TAG.fullmatch(tag) and DIGEST.fullmatch(digest)):
                 raise RegistryError(f"not a valid repository, tag and digest: {repository}:{tag}@{digest}")
         return list(dict.fromkeys(names))
@@ -120,33 +194,54 @@ class ExportContainerImages(FlowFileTransform):
                                     int(context.getProperty(self.TIMEOUT).getValue()),
                                     self._value(context, self.TRUSTED))
             names = self._request(context, flowfile, client)
-            batch, total = [], 0
+            batch = []
             for repository, tag, digest in names:
                 if client.manifest_digest(repository, tag) != digest:
                     raise RegistryError(f"{repository}:{tag} is not at {digest} in {client.host}")
                 root, children, blobs = plan_image(client, repository, digest)
                 batch.append((repository, tag, digest, repository, root, children, blobs))
-                total += sum(blobs.values())
+            per_image = context.getProperty(self.TAR_PER_IMAGE).getValue() == "true"
+            groups = [[image] for image in batch] if per_image else [batch]
             limit = parse_size(context.getProperty(self.MAX_SIZE).getValue())
-            if limit and total > limit:
-                raise RegistryError(f"the images hold {total} blob bytes, over Max Export Size")
+            for group in groups:
+                total = bundle_bytes(image[6] for image in group)
+                if limit and total > limit:
+                    raise RegistryError(f"{'an image holds' if per_image else 'the images hold'} {total} blob bytes, "
+                                        "over Max Export Size")
             directory = self._value(context, self.OUTPUT_DIR)
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-            name = context.getProperty(self.PREFIX).getValue() + stamp + ".tar"
+            prefix = context.getProperty(self.PREFIX).getValue()
+            artifact_type = context.getProperty(self.ARTIFACT_TYPE).getValue()
             os.makedirs(directory, exist_ok=True)
-            path = os.path.join(directory, name)
+            written, outputs = [], []
             try:
-                sha = write_export(client, path, batch)
+                for n, group in enumerate(groups):
+                    name = f"{prefix}{stamp}-{n:06d}.tar" if per_image else f"{prefix}{stamp}.tar"
+                    written.append(name)
+                    sha = write_export(client, os.path.join(directory, name), group)
+                    triples = [(r, t, d) for r, t, d, *_ in group]
+                    outputs.append({**export_attributes(directory, name, sha, client.host, artifact_type,
+                                                        [f"{r}:{t}@{d}" for r, t, d in triples]),
+                                    **image_attributes(triples)})
             except Exception:
-                for stale in (path, os.path.join(directory, "." + name + ".partial")):
-                    if os.path.exists(stale):
-                        os.remove(stale)
+                for name in written:
+                    for stale in (os.path.join(directory, name), os.path.join(directory, "." + name + ".partial")):
+                        if os.path.exists(stale):
+                            os.remove(stale)
                 raise
-            attributes = export_attributes(directory, name, sha, client.host,
-                                           context.getProperty(self.ARTIFACT_TYPE).getValue(),
-                                           [f"{r}:{t}@{d}" for r, t, d, *_ in batch])
         except Exception as error:
             self.logger.error(f"Export refused: {error}")
             return FlowFileTransformResult("failure", attributes={"registry.error": str(error)})
-        self.logger.info(f"Exported {len(batch)} image tag(s) from {client.host} as {path}")
-        return FlowFileTransformResult("success", attributes=attributes, contents=b"")
+        self.logger.info(f"Exported {len(batch)} image tag(s) from {client.host} as {len(outputs)} tar(s) in {directory}")
+        if not per_image:
+            return FlowFileTransformResult("success", attributes=outputs[0], contents=b"")
+        # One FlowFile cannot become several in a Python FlowFileTransform: the content holds one JSON object of
+        # attributes per tar, and SplitText plus EvaluateJsonPath turn each line into its own FlowFile.
+        for output, (repository, tag, digest, *_) in zip(outputs, batch):
+            output.update({"registry.repository": repository, "registry.tag": tag, "registry.digest": digest})
+        lines = "".join(json.dumps(output, sort_keys=True) + "\n" for output in outputs).encode()
+        triples = [(r, t, d) for r, t, d, *_ in batch]
+        return FlowFileTransformResult("success", contents=lines, attributes={
+            "mime.type": "application/x-ndjson", "registry.host": client.host, "X-Artifact-Type": artifact_type,
+            "registry.tar.count": str(len(outputs)), "registry.images": "\n".join(f"{r}:{t}@{d}" for r, t, d in triples),
+            **image_attributes(triples)})

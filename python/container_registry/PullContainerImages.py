@@ -16,8 +16,8 @@ from nifiapi.properties import ExpressionLanguageScope, PropertyDependency, Prop
 from nifiapi.relationship import Relationship
 
 from nifi_attributes import Attributes, evaluate
-from container_registry_client import (DIGEST, REPOSITORY, TAG, RegistryClient, RegistryError, export_attributes,
-                                       export_summary, parse_size, plan_image, read_limited, rebase, trusted_der,
+from container_registry_client import (DIGEST, REPOSITORY, TAG, RegistryClient, RegistryError, bundle_bytes,
+                                       export_attributes, export_summary, parse_size, plan_image, read_limited, rebase, trusted_der,
                                        web_opener, write_export)
 
 LISTING, LEDGER, IMAGE_LIST = "Registry Listing", "Ledger", "Image List"
@@ -26,7 +26,7 @@ PENDING_KEY = "pending"  # the same encoding of [{"at", "where", "name", "images
 STATE_LIMIT = 900_000    # ZooKeeper caps a component's cluster state near 1 MB
 LEDGER_LIMIT = 64 * 1024 * 1024  # the biggest ledger.json read
 STATE_VALUE = 60_000     # and each value it stores through writeUTF at 65535 bytes
-LEFTOVER_AFTER = 3600    # seconds a finished tar may sit in Output Directory before a run emits it again
+LEFTOVER_AFTER = 3600    # seconds a finished tar may sit in Tar Output Directory before a run emits it again
 
 
 
@@ -67,7 +67,7 @@ def dump_state(exported, pending=()):
     raw, kept = _pack(exported), _pack(list(pending)) if pending else ""
     if len(raw) + len(kept) > STATE_LIMIT:
         raise RegistryError(f"state for {len(exported)} image tags is {len(raw) + len(kept)} bytes, over the {STATE_LIMIT} "
-                            "byte limit of cluster state; set Max Export Size, narrow Repositories or Tag Filter, or split across processors")
+                            "byte limit of cluster state; set Max Export Size, narrow Repositories to Export or Tag Filter, or split across processors")
     values = _shards(STATE_KEY, raw)
     if kept:
         values.update(_shards(PENDING_KEY, kept))
@@ -79,7 +79,7 @@ def short(digest):
 
 
 @use_case(description="Export new and changed images from a low-side registry for a data diode.",
-          configuration="""Set Registry URL, Repositories (team/* or *) and Output Directory. Run on the primary node
+          configuration="""Set Source Registry URL, Repositories to Export (team/* or *) and Tar Output Directory. Run on the primary node
           every 15 minutes. Send success to FetchFile with Completion Strategy Delete File, then to the diode.""",
           keywords=["container", "diode", "registry", "export"])
 class PullContainerImages(FlowFileSource):
@@ -87,67 +87,167 @@ class PullContainerImages(FlowFileSource):
         implements = ["org.apache.nifi.python.processor.FlowFileSource"]
 
     class ProcessorDetails:
-        version = "2.0.0"
-        description = ("Exports container images from an OCI registry as a mirror.py export tar written to Output "
-                       "Directory, and emits a FlowFile that names it, for FetchFile to read. Each run exports what "
-                       "changed since the last export, recorded in cluster state. Schedule it on the primary node only.")
+        version = "1.5.0"
+        description = ("Exports container images from a source registry as a mirror.py export tar written to Tar Output "
+                       "Directory, and emits an empty FlowFile that names it, for FetchFile to read on the same node (or "
+                       "shared storage). Each run exports what changed since the last export, recorded in cluster state. "
+                       "Schedule it on the primary node only.")
         tags = ["container", "image", "oci", "docker", "registry", "export", "diode"]
 
-    REGISTRY_URL = PropertyDescriptor(name="Registry URL", description="The registry to export from: https://registry.example.internal, or "
-                         "https://<host>/artifactory/api/docker/<repo-key> for Artifactory.", required=True,
-                         validators=[StandardValidators.URL_VALIDATOR],
-                         expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
-    USERNAME = PropertyDescriptor(name="Username", description="Registry user. Empty: anonymous.",
-                     expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
-    PASSWORD = PropertyDescriptor(name="Password", description="Registry password or token.", sensitive=True)
-    SSL_CONTEXT = PropertyDescriptor(name="SSL Context Service", description="The truststore whose CAs are trusted in addition to the system "
-                    "store and SSL_CERT_FILE, for the registry and the Ledger URL.",
-                    controller_service_definition="org.apache.nifi.ssl.SSLContextProvider")
-    TRUSTED = PropertyDescriptor(name="Trusted Storage Hosts", description="Comma separated host names, addresses or CIDR ranges "
-                    "(10.0.0.0/8) that the registry may redirect blob downloads and uploads to although they are not public "
-                    "addresses, such as an on-premises MinIO. Anything else the registry names that is loopback, link-local, "
-                    "private or plain http from an https registry is refused. The registry's own host is always allowed at the addresses its name resolves to.")
-    IMAGE_SOURCE = PropertyDescriptor(name="Image Source", description="What a run exports. Registry Listing: every tag of Repositories whose "
-                         "digest differs from the last export. Ledger: what the mirror pipeline's ledger says it "
-                         "synced. Image List: the images in Image List.", required=True,
-                         allowable_values=["Registry Listing", "Ledger", "Image List"], default_value="Registry Listing")
-    REPOSITORIES = PropertyDescriptor(name="Repositories", description="For Registry Listing: repositories, separated by commas or new lines. "
-                         "team/* matches every catalog repository with that prefix, * matches all.",
-                         expression_language_scope=ExpressionLanguageScope.ENVIRONMENT,
-                   dependencies=[PropertyDependency(IMAGE_SOURCE, "Registry Listing")])
-    TAG_FILTER = PropertyDescriptor(name="Tag Filter", description="For Registry Listing: a regular expression a tag must match in full. The "
-                       "default skips sha256-... signature and attestation tags.", required=True,
-                       default_value="(?!sha256-).+", validators=[StandardValidators.REGULAR_EXPRESSION_VALIDATOR],
-                   dependencies=[PropertyDependency(IMAGE_SOURCE, "Registry Listing")])
-    LEDGER_URL = PropertyDescriptor(name="Ledger URL", description="For Ledger: the ledger.json URL, read only.",
-                       expression_language_scope=ExpressionLanguageScope.ENVIRONMENT,
-                   dependencies=[PropertyDependency(IMAGE_SOURCE, "Ledger")])
-    LEDGER_TOKEN = PropertyDescriptor(name="Ledger Token", description="Token for the Ledger URL.", sensitive=True,
-                   dependencies=[PropertyDependency(IMAGE_SOURCE, "Ledger")])
-    LEDGER_TOKEN_HEADER = PropertyDescriptor(name="Ledger Token Header", description="Header that carries the Ledger Token: PRIVATE-TOKEN for "
-                                "GitLab, Authorization for a Bearer value.", default_value="PRIVATE-TOKEN",
-                   dependencies=[PropertyDependency(IMAGE_SOURCE, "Ledger")])
-    IMAGE_LIST = PropertyDescriptor(name="Image List", description="For Image List: one image per line, repository:tag or "
-                       "repository@sha256:..., optionally prefixed with the registry host. # starts a comment.",
-                       expression_language_scope=ExpressionLanguageScope.ENVIRONMENT,
-                   dependencies=[PropertyDependency(IMAGE_SOURCE, "Image List")])
-    INITIAL_RUN = PropertyDescriptor(name="Initial Run", description="What a run does when the state is empty. Export All exports every image. "
-                        "Record Only records the current digests and exports nothing.", required=True,
-                        allowable_values=["Export All", "Record Only"], default_value="Export All")
-    REWRITE = PropertyDescriptor(name="Rewrite Base Path", description="Replace the first path segment of each target repository with this.",
-                    expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
-    STRIP = PropertyDescriptor(name="Strip Base Path", description="Remove the first path segment of each target repository.", required=True,
-                  allowable_values=["true", "false"], default_value="false")
-    OUTPUT_DIR = PropertyDescriptor(name="Output Directory", description="Where the tar is written. It must hold the largest export.",
-                       required=True, expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
-    PREFIX = PropertyDescriptor(name="Filename Prefix", description="Start of each tar's name.", required=True, default_value="container-images-")
-    ARTIFACT_TYPE = PropertyDescriptor(name="Artifact Type", description="The X-Artifact-Type attribute.", required=True,
-                          default_value="container-images")
-    MAX_SIZE = PropertyDescriptor(name="Max Export Size", description="The most blob bytes one tar holds, such as 20 GB. The rest go in the next "
-                     "run. An image larger than this goes alone. Empty: no limit.",
-                     validators=[StandardValidators.DATA_SIZE_VALIDATOR])
-    TIMEOUT = PropertyDescriptor(name="Request Timeout", description="Seconds a registry read may stall.", required=True, default_value="600",
-                    validators=[StandardValidators.POSITIVE_INTEGER_VALIDATOR])
+    REGISTRY_URL = PropertyDescriptor(
+        name="Source Registry URL",
+        description=(
+            "Registry to read images from, such as https://registry.example.com, or "
+            "https://host/artifactory/api/docker/repo-key for Artifactory. No user:password in the "
+            "URL. Required, no default. Environment variables allowed: ${REGISTRY_URL}."),
+        required=True,
+        validators=[StandardValidators.URL_VALIDATOR],
+        expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
+    USERNAME = PropertyDescriptor(
+        name="Source Registry Username",
+        description=(
+            "User for the source registry. Empty (default): anonymous access, which works only on a "
+            "registry that allows it. Environment variables allowed: ${REGISTRY_USER}."),
+        expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
+    PASSWORD = PropertyDescriptor(
+        name="Source Registry Password",
+        description=(
+            "Password or access token for the source registry. Empty (default): none sent. Sensitive:"
+            " reference a parameter, such as #{registry_password}."),
+        sensitive=True)
+    SSL_CONTEXT = PropertyDescriptor(
+        name="SSL Context Service",
+        description=(
+            "A StandardSSLContextService whose PKCS12 or JKS truststore holds the CA of the registry "
+            "and the Ledger URL (PEM is not accepted). Added to the system store and SSL_CERT_FILE. "
+            "Empty (default): only those are trusted. Keystore ignored."),
+        controller_service_definition="org.apache.nifi.ssl.SSLContextProvider")
+    TRUSTED = PropertyDescriptor(
+        name="Trusted Storage Hosts",
+        description=(
+            "Hosts, IPs or CIDR ranges the registry may redirect blob transfers to although they are "
+            "private, such as an on-premises MinIO: minio.internal, 10.20.0.0/16. Empty (default): "
+            "private, loopback, link-local and http-from-https redirects are refused. The registry's "
+            "own host is always allowed."))
+    IMAGE_SOURCE = PropertyDescriptor(
+        name="Image Source",
+        description=(
+            "What a run exports. Default Registry Listing: tags of Repositories to Export whose "
+            "digest changed since the last export. Ledger: images the mirror ledger says it synced. "
+            "Image List: the images in Image List."),
+        required=True,
+        allowable_values=["Registry Listing", "Ledger", "Image List"],
+        default_value="Registry Listing")
+    REPOSITORIES = PropertyDescriptor(
+        name="Repositories to Export",
+        description=(
+            "Registry Listing only. Repositories, comma or new line separated: team/app, team/* for a"
+            " prefix, * for all. Empty (default): nothing is exported. Environment variables allowed."),
+        expression_language_scope=ExpressionLanguageScope.ENVIRONMENT,
+        dependencies=[PropertyDependency(IMAGE_SOURCE, "Registry Listing")])
+    TAG_FILTER = PropertyDescriptor(
+        name="Tag Filter",
+        description=(
+            "Registry Listing only. Regular expression a tag must match in full. Default "
+            "(?!sha256-).+ skips the sha256-... signature and attestation tags. Use .+ for every tag,"
+            " v[0-9.]+ for release tags."),
+        required=True,
+        default_value="(?!sha256-).+",
+        validators=[StandardValidators.REGULAR_EXPRESSION_VALIDATOR],
+        dependencies=[PropertyDependency(IMAGE_SOURCE, "Registry Listing")])
+    LEDGER_URL = PropertyDescriptor(
+        name="Ledger URL",
+        description=(
+            "Ledger only. URL of the mirror pipeline's ledger.json, read only, such as "
+            "https://gitlab.example.com/api/v4/projects/1/repository/files/ledger.json/raw?ref=main. "
+            "The ledger must name the Source Registry URL host. No default."),
+        expression_language_scope=ExpressionLanguageScope.ENVIRONMENT,
+        dependencies=[PropertyDependency(IMAGE_SOURCE, "Ledger")])
+    LEDGER_TOKEN = PropertyDescriptor(
+        name="Ledger Token",
+        description=(
+            "Ledger only. Token sent to the Ledger URL in the header named by Ledger Token Header. "
+            "Empty (default): no header sent. It is not sent to a redirect target."),
+        sensitive=True,
+        dependencies=[PropertyDependency(IMAGE_SOURCE, "Ledger")])
+    LEDGER_TOKEN_HEADER = PropertyDescriptor(
+        name="Ledger Token Header",
+        description=(
+            "Ledger only. Header that carries Ledger Token: PRIVATE-TOKEN (default, GitLab) or "
+            "Authorization for a value such as Bearer <token>. Unused when Ledger Token is empty."),
+        default_value="PRIVATE-TOKEN",
+        dependencies=[PropertyDependency(IMAGE_SOURCE, "Ledger")])
+    IMAGE_LIST = PropertyDescriptor(
+        name="Image List",
+        description=(
+            "Image List only. One image per line: team/app:1.0 or team/app@sha256:<hex>, optionally "
+            "prefixed with the registry host. No tag means latest. # starts a comment. An image "
+            "already exported at the same digest is skipped."),
+        expression_language_scope=ExpressionLanguageScope.ENVIRONMENT,
+        dependencies=[PropertyDependency(IMAGE_SOURCE, "Image List")])
+    INITIAL_RUN = PropertyDescriptor(
+        name="Initial Run",
+        description=(
+            "What a run does when no state exists yet. Default Export All: export every image found. "
+            "Record Only: record the current digests and export nothing, so only later changes are "
+            "exported."),
+        required=True,
+        allowable_values=["Export All", "Record Only"],
+        default_value="Export All")
+    REWRITE = PropertyDescriptor(
+        name="Rewrite Target Base Path",
+        description=(
+            "Replace the first path segment of every target repository, which is the name Push "
+            "creates: team/app becomes new/app with new. Empty (default): unchanged. Not with Strip "
+            "Target Base Path. Environment variables allowed."),
+        expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
+    STRIP = PropertyDescriptor(
+        name="Strip Target Base Path",
+        description=(
+            "Remove the first path segment of every target repository: team/app becomes app. Default "
+            "false: names unchanged. Not with Rewrite Target Base Path."),
+        required=True,
+        allowable_values=["true", "false"],
+        default_value="false")
+    OUTPUT_DIR = PropertyDescriptor(
+        name="Tar Output Directory",
+        description=(
+            "Local directory on this node for the tars, such as /data/out. Set it from a parameter, "
+            "#{container-images.tar.dir}. Use a per-node volume, same path on every node, outside "
+            "NiFi's repositories. Trap: FetchFile reads it by path: keep the connection not load-"
+            "balanced, or use shared storage."),
+        required=True,
+        expression_language_scope=ExpressionLanguageScope.ENVIRONMENT)
+    PREFIX = PropertyDescriptor(
+        name="Tar Filename Prefix",
+        description=(
+            "Start of each tar's file name, followed by the UTC time and .tar, such as container-"
+            "images-20260101T000000000000Z.tar. Default container-images-. Pull treats any such file "
+            "left in Tar Output Directory as its own, so keep it unique there."),
+        required=True,
+        default_value="container-images-")
+    ARTIFACT_TYPE = PropertyDescriptor(
+        name="X-Artifact-Type Value",
+        description=(
+            "Value of the X-Artifact-Type attribute on the output FlowFile, which a RouteOnAttribute "
+            "downstream matches. Default container-images, the value the Push route expects. Change "
+            "it only together with that route."),
+        required=True,
+        default_value="container-images")
+    MAX_SIZE = PropertyDescriptor(
+        name="Max Export Size",
+        description=(
+            "Most blob bytes in one tar, such as 20 GB; a layer shared by two images counts once. The "
+            "rest go in the next run; an image over the limit goes alone. Empty (default): no limit."),
+        validators=[StandardValidators.DATA_SIZE_VALIDATOR])
+    TIMEOUT = PropertyDescriptor(
+        name="Request Timeout",
+        description=(
+            "Seconds a registry read may stall before it fails. Default 600 (10 minutes). Blobs "
+            "stream, so this is a stall limit, not a limit on the total time."),
+        required=True,
+        default_value="600",
+        validators=[StandardValidators.POSITIVE_INTEGER_VALIDATOR])
 
     PROPERTIES = [REGISTRY_URL, USERNAME, PASSWORD, SSL_CONTEXT, TRUSTED, IMAGE_SOURCE, REPOSITORIES, TAG_FILTER, LEDGER_URL,
                   LEDGER_TOKEN, LEDGER_TOKEN_HEADER, IMAGE_LIST, INITIAL_RUN, REWRITE, STRIP, OUTPUT_DIR, PREFIX,
@@ -157,7 +257,7 @@ class PullContainerImages(FlowFileSource):
         super().__init__()
 
     def getRelationships(self):
-        return [Relationship("success", "A FlowFile naming each export tar written to Output Directory")]
+        return [Relationship("success", "Empty FlowFile per tar written to Tar Output Directory; filename and absolute.path name it, for FetchFile")]
 
     def getPropertyDescriptors(self):
         return self.PROPERTIES
@@ -205,7 +305,7 @@ class PullContainerImages(FlowFileSource):
             ledger = json.loads(read_limited(response, LEDGER_LIMIT, "the ledger"))
         owner = ledger.get("registry") or ""
         if owner and owner != client.host:
-            raise RegistryError(f"the ledger belongs to {owner}, not {client.host}; set Registry URL to it")
+            raise RegistryError(f"the ledger belongs to {owner}, not {client.host}; set Source Registry URL to it")
         for key, record in (ledger.get("synced") or {}).items():
             digest = (record or {}).get("digest", "")
             if ":" not in key or not DIGEST.fullmatch(digest):
@@ -297,7 +397,7 @@ class PullContainerImages(FlowFileSource):
                 recorded[(rebase(key.rpartition(":")[0], rewrite, strip), key.rpartition(":")[2])] = (key, recorded_digest)
             except RegistryError:
                 continue
-        batch, planned, total = [], {}, 0
+        batch, planned = [], {}
         for repository, tag, digest in wanted:
             key = f"{repository}@{digest}"
             if key not in planned:
@@ -322,11 +422,9 @@ class PullContainerImages(FlowFileSource):
                 self.logger.warn(f"Skipping {repository}:{tag}: another image in this export already ends at {target}:{tag}")
                 continue
             root, children, blobs = planned[key]
-            size = sum(blobs.values())
-            if limit and batch and total + size > limit:
+            if limit and batch and bundle_bytes([b[6] for b in batch] + [blobs]) > limit:
                 continue  # the next run takes it, since the state does not record it
             batch.append((repository, tag, digest, target, root, children, blobs))
-            total += size
         if not batch:
             save()
             return None
@@ -363,7 +461,7 @@ class PullContainerImages(FlowFileSource):
         """(pending without the exports that were fetched, those of them that another node wrote and lost).
 
         FetchFile with Completion Strategy Delete File removes a tar once it is fetched, so on the node that wrote
-        it a missing tar was fetched. An export of another node whose tar is not in Output Directory either, and is
+        it a missing tar was fetched. An export of another node whose tar is not in Tar Output Directory either, and is
         older than LEFTOVER_AFTER, was lost with that node: nothing here tells it apart from one fetched since
         (the cost is a repeated export, which Push takes as already present).
         """
@@ -427,7 +525,7 @@ class PullContainerImages(FlowFileSource):
         return attributes
 
     def _leftover(self, context, client, directory):
-        """A FlowFile for the oldest finished tar in Output Directory that has sat there past LEFTOVER_AFTER.
+        """A FlowFile for the oldest finished tar in Tar Output Directory that has sat there past LEFTOVER_AFTER.
 
         NiFi creates and commits the FlowFile only after create() has returned, and the state is already written
         by then, so a crash or a failed commit in between leaves a tar that no FlowFile names. FetchFile with
