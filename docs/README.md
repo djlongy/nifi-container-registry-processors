@@ -15,6 +15,7 @@ Claims about NiFi behaviour in `decisions/` and `runbooks/testing-checklist.md` 
 | [runbooks/nifi-by-hand.md](runbooks/nifi-by-hand.md) | Click-by-click build of the webhook flow in the NiFi 2.x UI |
 | [runbooks/nifi-by-hand-o4-push.md](runbooks/nifi-by-hand-o4-push.md) | Click-by-click O4 flow: ExecuteStreamCommand running `python/scripts/push_from_stdin.py` |
 | [runbooks/nifi-by-hand-o2-layer-flow.md](runbooks/nifi-by-hand-o2-layer-flow.md) | O2 flow: one FlowFile per layer with InvokeHTTP, a manifest gate and layer recovery |
+| [runbooks/nifi-by-hand-native-layer-flow.md](runbooks/nifi-by-hand-native-layer-flow.md) | Native layer flow: PlanRegistryTransfer plans, InvokeHTTP moves every layer, a manifest gate and resend by layer number. Two importable definitions in [flows/](flows/) |
 | [runbooks/nifi-by-hand-o3-loopback.md](runbooks/nifi-by-hand-o3-loopback.md) | O3 flow: a script posting to a loopback ListenHTTP with mTLS, no staging disk |
 | [runbooks/testing-checklist.md](runbooks/testing-checklist.md) | What to check, and where in NiFi, when testing each option |
 | [reference/properties.md](reference/properties.md) | Where the property tables are |

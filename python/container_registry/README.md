@@ -84,6 +84,22 @@ Generated from the descriptors (`python3 python/tests/test_readme_tables.py --wr
 | Request Timeout | Yes | `600` | Seconds a registry read may stall before it fails. Default 600 (10 minutes). Blobs stream, so this is a stall limit, not a limit on the total time. |
 <!-- /properties -->
 
+**PlanRegistryTransfer**
+
+<!-- properties:PlanRegistryTransfer -->
+| Name | Required | Default | Description |
+|---|---|---|---|
+| Source Registry URL | Yes | none | Registry to read manifests from, such as https://registry.example.com, or https://host/artifactory/api/docker/repo-key for Artifactory. No user:password in the URL. Required, no default. Environment variables allowed: ${REGISTRY_URL}. |
+| Source Registry Username | No | none | User for the source registry. Empty (default): anonymous access, which works only on a registry that allows it. Environment variables allowed: ${REGISTRY_USER}. |
+| Source Registry Password | No | none | Password or access token for the source registry. Empty (default): none sent. Sensitive: reference a parameter, such as #{registry_password}. |
+| SSL Context Service | No | none | A StandardSSLContextService whose PKCS12 or JKS truststore holds the registry's CA (it does not accept PEM). Its CAs add to the system store and SSL_CERT_FILE. Empty (default): only those are trusted. Its keystore is ignored. |
+| Allowed Repositories | Yes | none | Allowlist, not the selection: the FlowFile picks the images and each must be in here. Comma or new line separated: team/app, or team/* for a prefix, * for all. Required. Any other repository fails the FlowFile. |
+| Platform Selection | Yes | `all` | all (default): every platform, index kept, so its digest is the source's. Or platforms such as linux/amd64, linux/arm64/v8 (comma or new line separated): only those are planned, without the index; a single match gets the tag, on its own digest. |
+| Maximum Manifest Depth | Yes | `16` | Most indexes nested in one another before an image is refused as malformed. Default 16. |
+| Maximum Jobs Per Transfer | Yes | `1000` | Most jobs (configs, layers, manifests and indexes, a blob shared by platforms counted once) one image may plan. More fails the FlowFile. Default 1000. |
+| Request Timeout | Yes | `60` | Seconds a registry read may stall before it fails. Default 60. Only manifests and HEAD checks are read here, never blobs. |
+<!-- /properties -->
+
 **PushContainerImages**
 
 <!-- properties:PushContainerImages -->

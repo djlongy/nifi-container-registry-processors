@@ -8,12 +8,13 @@ import unittest
 import nifi_stub  # noqa: F401
 
 import ExportContainerImages
+import PlanRegistryTransfer
 import PullContainerImages
 import PushContainerImages
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
 READMES = [os.path.join(ROOT, "README.md"), os.path.join(ROOT, "python", "container_registry", "README.md")]
-PROCESSORS = {m.__name__: getattr(m, m.__name__) for m in (PullContainerImages, ExportContainerImages, PushContainerImages)}
+PROCESSORS = {m.__name__: getattr(m, m.__name__) for m in (PullContainerImages, ExportContainerImages, PlanRegistryTransfer, PushContainerImages)}
 BLOCK = re.compile(r"(<!-- properties:(\w+) -->\n).*?(<!-- /properties -->)", re.S)
 
 
