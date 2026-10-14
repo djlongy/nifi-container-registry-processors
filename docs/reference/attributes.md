@@ -17,6 +17,22 @@ ListenHTTP turns them into attributes with HTTP Headers to receive as Attributes
 | `X-Sha256` | ExportContainerImages | Must equal the sha256 of the body, or the webhook fails |
 | `X-CI-Project`, `X-CI-Pipeline-Url`, `X-CI-Commit-Sha`, `X-Image-Count`, `X-Registry` | nothing in Export | Routing and display only. Never used to select or check images |
 
+## PlanRegistryTransfer
+
+Read from the incoming FlowFile (it ignores the content when `registry.image.reference` is set; otherwise the content is a webhook body, checked like Export checks it):
+
+| Attribute | Direction | Value |
+|---|---|---|
+| `registry.image.reference` | read | `repository:tag`, `repository@sha256:...` or `repository:tag@sha256:...` |
+| `transfer.id` | read, written | Correlation id; a UUID is made when absent |
+| `registry.layers` | read | Resend only these layer numbers (and the config), such as `2,3`. No manifest is planned. One image only |
+| `registry.check` | read | The 8-character check code of the incomplete bulletin. Required with `registry.layers`; a different code fails the FlowFile because the tag has moved |
+| `registry.platform` | read | With `registry.layers`: the platform, such as `linux/arm64`, whose layer numbers are meant (an index only) |
+| `registry.error` | written on failure | Why the request was refused |
+| `planner.job.count` | written | Jobs in the content |
+
+Each job in `$.jobs`: `kind` (`config`, `blob`, `manifest`, `index`), `repository`, `digest`, `size`, `mediaType`, `tag`, `reference`, `layer`, `layers`, `platform`, `check`, `transfer`, `needs`, and for manifests and indexes `body` (base64 of the exact source bytes). The native flow turns them into the attributes `kind`, `repository`, `digest`, `size`, `tag`, `reference`, `layer.n`, `layer.m`, `platform`, `check`, `transfer.id` and `media.type`.
+
 ## ExportContainerImages
 
 | Attribute | Direction | Value |

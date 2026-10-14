@@ -1,4 +1,3 @@
-import hashlib
 import json
 import os
 import re
@@ -10,17 +9,8 @@ from nifiapi.properties import ExpressionLanguageScope, PropertyDescriptor, Stan
 from nifiapi.relationship import Relationship
 
 from nifi_attributes import Attributes, evaluate
-from container_registry_client import (DIGEST, REPOSITORY, TAG, RegistryClient, RegistryError, bundle_bytes,
-                                       export_attributes, parse_size, plan_image, trusted_der, write_export)
-
-
-def host_of(registry):
-    return re.sub(r":443$", "", (registry or "").lower())
-
-
-def allowed(repository, entries):
-    """True when repository equals an allowlist entry, or starts with one that ends in *."""
-    return any(repository.startswith(e[:-1]) if e.endswith("*") else repository == e for e in entries)
+from container_registry_client import (RegistryClient, RegistryError, bundle_bytes,
+                                       export_attributes, parse_size, plan_image, trusted_der, webhook_images, write_export)
 
 
 def image_attributes(images):
@@ -164,27 +154,8 @@ class ExportContainerImages(FlowFileTransform):
     def _request(self, context, flowfile, client):
         """The (repository, tag, digest) of each image the webhook names, once it has passed every check that needs
         no registry. Raises RegistryError at the first that fails."""
-        body = flowfile.getContentsAsBytes()
-        if flowfile.getAttribute("X-Sha256") != hashlib.sha256(body).hexdigest():
-            raise RegistryError("X-Sha256 is missing or is not the sha256 of the body")
-        try:
-            request = json.loads(body)
-            registry, images = request["registry"], request["images"]
-            names = [(i["repository"], i["tag"], i["digest"]) for i in images]
-            valid = isinstance(registry, str) and names and all(isinstance(v, str) for n in names for v in n)
-        except (ValueError, KeyError, TypeError):
-            valid = False
-        if not valid:
-            raise RegistryError('the body is not JSON {"registry": "host", "images": [{"repository", "tag", "digest"}]}')
-        if host_of(registry) != host_of(client.host):
-            raise RegistryError(f"the body names registry {registry}, not {client.host}")
         entries = [e for e in re.split(r"[,\s]+", self._value(context, self.REPOSITORIES) or "") if e]
-        for repository, tag, digest in names:
-            if not allowed(repository, entries):
-                raise RegistryError(f"{repository} is not in Allowed Repositories")
-            if not (REPOSITORY.fullmatch(repository) and TAG.fullmatch(tag) and DIGEST.fullmatch(digest)):
-                raise RegistryError(f"not a valid repository, tag and digest: {repository}:{tag}@{digest}")
-        return list(dict.fromkeys(names))
+        return webhook_images(flowfile.getContentsAsBytes(), flowfile.getAttribute("X-Sha256"), client.host, entries)
 
     def transform(self, context, flowfile):
         try:
