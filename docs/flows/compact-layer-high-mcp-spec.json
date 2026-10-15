@@ -20,7 +20,7 @@
         "Stale After Hours": "24"
       },
       "auto_terminated": [
-        "ready",
+        "complete",
         "original"
       ],
       "bundle": {
@@ -102,7 +102,7 @@
     },
     {
       "type": "connection",
-      "name": "FromDiodeToRouteTransfer",
+      "name": "FromDiode",
       "source": "FromDiode",
       "target": "RouteTransfer",
       "relationships": [],
@@ -111,41 +111,42 @@
     },
     {
       "type": "connection",
-      "name": "RouteTransferToUploadContent",
+      "name": "prepared",
       "source": "RouteTransfer",
       "target": "UploadContent",
       "relationships": [
-        "http"
+        "prepared"
       ],
       "back_pressure_data_size_threshold": "20 GB",
       "back_pressure_object_threshold": 20
     },
     {
       "type": "connection",
-      "name": "RouteTransferToRetryTransfer",
+      "name": "retryable, waiting",
       "source": "RouteTransfer",
       "target": "RetryTransfer",
       "relationships": [
-        "retry"
+        "retryable",
+        "waiting"
       ],
       "back_pressure_data_size_threshold": "20 GB",
       "back_pressure_object_threshold": 20
     },
     {
       "type": "connection",
-      "name": "RouteTransferToHold",
+      "name": "failure, unverified",
       "source": "RouteTransfer",
       "target": "Hold",
       "relationships": [
         "failure",
-        "hash"
+        "unverified"
       ],
       "back_pressure_data_size_threshold": "20 GB",
       "back_pressure_object_threshold": 20
     },
     {
       "type": "connection",
-      "name": "UploadContentToRouteTransfer",
+      "name": "Original, No Retry, Retry, Failure",
       "source": "UploadContent",
       "target": "RouteTransfer",
       "relationships": [
@@ -159,7 +160,7 @@
     },
     {
       "type": "connection",
-      "name": "RetryTransferToRouteTransfer",
+      "name": "retry",
       "source": "RetryTransfer",
       "target": "RouteTransfer",
       "relationships": [
@@ -170,7 +171,7 @@
     },
     {
       "type": "connection",
-      "name": "RetryTransferToHold",
+      "name": "retries_exceeded, failure",
       "source": "RetryTransfer",
       "target": "Hold",
       "relationships": [
@@ -182,7 +183,7 @@
     },
     {
       "type": "connection",
-      "name": "RouteTransferToStaleImages",
+      "name": "stale",
       "source": "RouteTransfer",
       "target": "StaleImages",
       "relationships": [

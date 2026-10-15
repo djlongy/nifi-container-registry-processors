@@ -70,7 +70,8 @@
       },
       "auto_terminated": [
         "original",
-        "stale"
+        "stale",
+        "waiting"
       ],
       "bundle": {
         "group": "org.apache.nifi",
@@ -156,7 +157,7 @@
     },
     {
       "type": "connection",
-      "name": "ReceiveWebhookToPlanTransfer",
+      "name": "success",
       "source": "ReceiveWebhook",
       "target": "PlanTransfer",
       "relationships": [
@@ -167,7 +168,7 @@
     },
     {
       "type": "connection",
-      "name": "PlanTransferToSplitJobs",
+      "name": "success",
       "source": "PlanTransfer",
       "target": "SplitJobs",
       "relationships": [
@@ -178,7 +179,7 @@
     },
     {
       "type": "connection",
-      "name": "PlanTransferToHold",
+      "name": "failure",
       "source": "PlanTransfer",
       "target": "Hold",
       "relationships": [
@@ -189,7 +190,7 @@
     },
     {
       "type": "connection",
-      "name": "SplitJobsToRouteTransfer",
+      "name": "split",
       "source": "SplitJobs",
       "target": "RouteTransfer",
       "relationships": [
@@ -200,7 +201,7 @@
     },
     {
       "type": "connection",
-      "name": "SplitJobsToHold",
+      "name": "failure",
       "source": "SplitJobs",
       "target": "Hold",
       "relationships": [
@@ -211,51 +212,51 @@
     },
     {
       "type": "connection",
-      "name": "RouteTransferToFetchBlob",
+      "name": "prepared",
       "source": "RouteTransfer",
       "target": "FetchBlob",
       "relationships": [
-        "http"
+        "prepared"
       ],
       "back_pressure_data_size_threshold": "20 GB",
       "back_pressure_object_threshold": 20
     },
     {
       "type": "connection",
-      "name": "RouteTransferToHashContent",
+      "name": "unverified",
       "source": "RouteTransfer",
       "target": "HashContent",
       "relationships": [
-        "hash"
+        "unverified"
       ],
       "back_pressure_data_size_threshold": "20 GB",
       "back_pressure_object_threshold": 20
     },
     {
       "type": "connection",
-      "name": "RouteTransferToToDiode",
+      "name": "complete",
       "source": "RouteTransfer",
       "target": "ToDiode",
       "relationships": [
-        "ready"
+        "complete"
       ],
       "back_pressure_data_size_threshold": "20 GB",
       "back_pressure_object_threshold": 20
     },
     {
       "type": "connection",
-      "name": "RouteTransferToRetryTransfer",
+      "name": "retryable",
       "source": "RouteTransfer",
       "target": "RetryTransfer",
       "relationships": [
-        "retry"
+        "retryable"
       ],
       "back_pressure_data_size_threshold": "20 GB",
       "back_pressure_object_threshold": 20
     },
     {
       "type": "connection",
-      "name": "RouteTransferToHold",
+      "name": "failure",
       "source": "RouteTransfer",
       "target": "Hold",
       "relationships": [
@@ -266,7 +267,7 @@
     },
     {
       "type": "connection",
-      "name": "FetchBlobToRouteTransfer",
+      "name": "Response",
       "source": "FetchBlob",
       "target": "RouteTransfer",
       "relationships": [
@@ -277,7 +278,7 @@
     },
     {
       "type": "connection",
-      "name": "FetchBlobToRouteTransfer",
+      "name": "Failure, No Retry, Retry",
       "source": "FetchBlob",
       "target": "RouteTransfer",
       "relationships": [
@@ -290,7 +291,7 @@
     },
     {
       "type": "connection",
-      "name": "HashContentToRouteTransfer",
+      "name": "success",
       "source": "HashContent",
       "target": "RouteTransfer",
       "relationships": [
@@ -301,7 +302,7 @@
     },
     {
       "type": "connection",
-      "name": "HashContentToHold",
+      "name": "failure",
       "source": "HashContent",
       "target": "Hold",
       "relationships": [
@@ -312,7 +313,7 @@
     },
     {
       "type": "connection",
-      "name": "RetryTransferToRouteTransfer",
+      "name": "retry",
       "source": "RetryTransfer",
       "target": "RouteTransfer",
       "relationships": [
@@ -323,7 +324,7 @@
     },
     {
       "type": "connection",
-      "name": "RetryTransferToHold",
+      "name": "retries_exceeded, failure",
       "source": "RetryTransfer",
       "target": "Hold",
       "relationships": [
