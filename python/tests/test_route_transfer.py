@@ -324,9 +324,30 @@ class TransferController(unittest.TestCase):
                    self.run_flow("High", {**high, "registry.stage": "manifest-tag"}),
                    self.run_flow("High", {**self.facts(kind="manifest", needs=json.dumps([DIGEST, DIGEST])), **owned})]
         self.assertEqual([r.relationship for r in results], ["unverified", "complete", "prepared", "complete", "waiting"])
+        del results[2]  # digest PUT to tag PUT: one step on the same side, so the count carries on
         for result in results:
             self.assertEqual(result.attributes["registry.retries.uuid"], "")
             self.assertEqual(result.attributes["registry.retries"], "0")
+
+    def test_a_tag_put_that_keeps_failing_reaches_hold_and_carries_a_token(self):
+        self.registry.status = 200
+        attrs = {**self.facts(kind="manifest"), "registry.stage": "manifest-digest", "invokehttp.status.code": "201",
+                 "resp.Docker-Content-Digest": DIGEST}
+        outcomes = []
+        for _ in range(6):
+            result = self.run_flow("High", attrs)  # digest PUT committed: the tag PUT comes next
+            self.assertEqual(result.relationship, "prepared")
+            self.assertEqual(result.attributes["registry.auth.header"], "Bearer scoped-token")
+            self.assertIn(("team/app", "pull,push", "GET", ""), self.registry.calls)  # authenticated first
+            attrs = {**attrs, **result.attributes, "invokehttp.status.code": "401"}
+            result = self.run_flow("High", attrs)  # the tag PUT answers 401
+            self.assertEqual(result.relationship, "retryable")
+            outcome, attrs = retry_flowfile({**attrs, **result.attributes})
+            outcomes.append(outcome)
+            if outcome != "retry":
+                break
+            attrs.update({"registry.stage": "manifest-digest", "invokehttp.status.code": "201"})
+        self.assertEqual(outcomes, ["retry", "retry", "retry", "retries_exceeded"])
 
     def test_a_low_side_retry_does_not_fail_the_high_side_retry_card(self):
         low = {**self.facts(), "registry.stage": "fetch", "invokehttp.status.code": "503"}
