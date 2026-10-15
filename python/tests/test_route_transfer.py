@@ -148,12 +148,16 @@ class TransferController(unittest.TestCase):
         self.assertEqual(result.relationship, "retry")
         self.assertNotIn("registry.http.url", result.attributes)
         self.assertEqual(result.attributes["registry.auth.header"], "")
+        self.assertIn(("warn", "retrying: upload Location names a foreign host"), self.processor.logger.lines)
 
     def test_basic_credentials_are_not_published_in_attributes(self):
         self.registry.header = "Basic permanent-secret"
-        result = self.run_flow("Low", self.facts())
-        self.assertEqual(result.relationship, "retry")
-        self.assertNotIn("permanent-secret", json.dumps(result.attributes))
+        for side in ("Low", "High"):
+            with self.subTest(side=side):
+                result = self.run_flow(side, self.facts())
+                self.assertEqual(result.relationship, "http")
+                self.assertEqual(result.attributes["registry.auth.header"], "")
+                self.assertNotIn("permanent-secret", json.dumps(result.attributes))
 
     def test_http_retries_refresh_auth_but_permanent_refusals_hold(self):
         for status, expected in [(0, "retry"), (401, "retry"), (429, "retry"), (503, "retry"), (400, "failure"), (202, "failure")]:
