@@ -77,7 +77,7 @@ class PushContainerImages(FlowFileTransform):
         implements = ["org.apache.nifi.python.processor.FlowFileTransform"]
 
     class ProcessorDetails:
-        version = "1.5.0"
+        version = "1.5.2"
         description = ("Pushes every image of a mirror.py export tar into the target registry, digests unchanged. The tar "
                        "is read from the local disk path in Input Tar Path (set it for any real tar), or from the "
                        "FlowFile content when that is empty. Every target tag is checked before the first upload, so "

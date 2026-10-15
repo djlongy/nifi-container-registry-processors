@@ -32,7 +32,7 @@ initContainers:
         mountPath: /target
 ```
 
-NiFi discovers the processors within a minute, listed as `PullContainerImages 1.5.0`, `PushContainerImages 1.5.0` and `ExportContainerImages 1.5.0` (bundle `python-extensions`). An edited file reloads when the processor next starts.
+NiFi discovers the processors within a minute, listed as `PullContainerImages 1.5.2`, `PushContainerImages 1.5.2` and `ExportContainerImages 1.5.2` (bundle `python-extensions`). An edited file reloads when the processor next starts.
 
 ## Properties
 
