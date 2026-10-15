@@ -29,6 +29,8 @@ High rechecked the exact fixture manifest and emitted this real warning while re
 
 > `ci/plana-busybox:replay-proof-20261015 (linux/amd64) incomplete: missing layers 2 of 2. Check code f6d01108`
 
+Recorded example from 2026-10-15, with the account header cropped out.
+
 [![Actual missing-layer bulletin](../images/image-transfer-missing-layer-bulletin.jpg)](../images/image-transfer-missing-layer-bulletin.jpg)
 
 (A GenerateFlowFile starts with none of the webhook's attributes; the dynamic properties it needs, and nothing else, are listed in [the input contract](../reference/contract.md#standing-in-for-the-webhook-with-generateflowfile).) The low stopped GenerateFlowFile had image reference, `registry.layers=2`, `registry.check=f6d01108`, `registry.platform=linux/amd64`, Primary node execution and batch size 1. Run once created exactly **one request**. Low fetched the 337-byte config and the 262,414-byte missing layer; it did not fetch layer 1 for this replay. High uploaded layer 2, skipped the existing config, and then committed the retained manifest by digest and tag. High HEAD/GET became 200, the downloaded blob hash/size matched, and both work/failure canvases drained.
@@ -51,6 +53,8 @@ At **15:09:28 UTC**, the unique layer 2 file was absent from active storage and 
 | High InvokeHTTP SEND manifest tag | 15:10:02.456 | 12759246 | 561 |
 
 At **15:09:46.885 UTC**, high HEAD/GET already returned 200 and the downloaded layer matched both its expected SHA-256 and size. A direct filesystem check confirmed the active blob file had been recreated with those exact bytes, before cleanup touched the manifest association. After the dependency retry, the new manifest job completed too. Both sides finished with zero queued FlowFiles, including zero failures into Hold.
+
+Recorded example from 2026-10-15: the high side canvas as it was during the proof, before the cards and group were renamed and before the Hold card became a disabled LogMessage. The account header and breadcrumb are cropped out.
 
 [![Recovered high side, queues empty](../images/image-transfer-recovered-high-side.jpg)](../images/image-transfer-recovered-high-side.jpg)
 
