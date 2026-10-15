@@ -169,9 +169,44 @@ class TransferController(unittest.TestCase):
     def test_missing_dependencies_report_human_fields_and_retry_without_content_reads(self):
         result = self.run_flow("High", self.facts(kind="manifest", needs=json.dumps([DIGEST, DIGEST])))
         self.assertEqual(result.relationship, "retry")
-        self.assertEqual(result.attributes["registry.retry.max"], "120")
+        self.assertEqual(result.attributes["registry.retry.max"], "1000000")
+        self.assertEqual(self.processor.logger.lines, [])  # waiting is normal: no warning until stale
         self.assertIn("team/app:latest (linux/amd64) incomplete: missing layers 1 of 1 and the config blob", result.attributes["registry.error"])
         self.assertIn("Check code 1234abcd", result.attributes["registry.error"])
+
+    def test_waiting_manifest_checks_on_a_doubling_interval_and_skips_the_registry_until_due(self):
+        manifest = self.facts(kind="manifest", needs=json.dumps([DIGEST, DIGEST]))
+        with patch("RouteRegistryTransfer.time.time", return_value=1000.0):
+            first = self.run_flow("High", manifest)
+        self.assertEqual(float(first.attributes["registry.wait.next"]), 1030.0)
+        waiting = {**manifest, **first.attributes}
+        self.registry.calls.clear()
+        with patch("RouteRegistryTransfer.time.time", return_value=1020.0):
+            early = self.run_flow("High", waiting)
+        self.assertEqual(early.relationship, "retry")
+        self.assertEqual(self.registry.calls, [])  # not due: no request at all
+        nexts = []
+        for check, now in enumerate([1030.0, 2000.0, 9000.0, 20000.0, 40000.0, 60000.0], start=2):
+            with patch("RouteRegistryTransfer.time.time", return_value=now):
+                result = self.run_flow("High", waiting)
+            waiting = {**waiting, **result.attributes}
+            self.assertEqual(waiting["registry.wait.checks"], str(check))
+            nexts.append(float(waiting["registry.wait.next"]) - now)
+        self.assertEqual(nexts, [60, 120, 240, 480, 960, 1800])  # doubles, capped at 30 min
+
+    def test_manifest_goes_stale_after_the_configured_hours_with_one_warning_and_a_fresh_wait_on_replay(self):
+        manifest = {**self.facts(kind="manifest", needs=json.dumps([DIGEST, DIGEST])),
+                    "registry.wait.since": "0", "registry.wait.checks": "40", "registry.wait.next": "0"}
+        with patch("RouteRegistryTransfer.time.time", return_value=2 * 3600.0):
+            result = self.run_flow("High", manifest, **{"Stale After Hours": "2"})
+        self.assertEqual(result.relationship, "stale")
+        self.assertIn("missing layers 1 of 1 and the config blob. Check code 1234abcd", result.attributes["registry.error"])
+        self.assertEqual(result.attributes["registry.wait.since"], "")
+        self.assertEqual(len(self.processor.logger.lines), 1)
+        self.assertIn("moved to stale", self.processor.logger.lines[0][1])
+        with patch("RouteRegistryTransfer.time.time", return_value=2 * 3600.0 - 1):
+            result = self.run_flow("High", manifest, **{"Stale After Hours": "2"})
+        self.assertEqual(result.relationship, "retry")
 
     def test_manifest_is_committed_by_digest_before_its_tag(self):
         self.registry.status = 200

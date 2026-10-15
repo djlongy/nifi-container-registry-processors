@@ -96,6 +96,7 @@ Use **Add Processor**, search for the type, select the exact version, then **Con
 | High | UploadContent | InvokeHTTP | 2.12.0 | Stopped while configuring |
 | High | RetryTransfer | RetryFlowFile | 2.12.0 | Stopped while configuring |
 | High | Hold | UpdateAttribute | 2.12.0 | **Disabled** |
+| High | StaleImages | UpdateAttribute | 2.12.0 | **Disabled** |
 
 Set these common settings on every processor (including the disabled Holds):
 
@@ -181,8 +182,9 @@ Auto-terminate `original`; connect `split` and `failure`. This splits the small 
 | SSL Context Service | Blank for system trust, otherwise `RegistryTrust` | Blank for system trust, otherwise high-side `RegistryTrust` |
 | Target Repository | **Leave blank** | `#{dst_repository}` (or blank to keep source repository) |
 | Request Timeout | `60` seconds | `60` seconds |
+| Stale After Hours | `24` (unused) | `24` |
 
-Low auto-termination: `original` only. High auto-termination: `original`, `ready`. Connect every other relationship as listed below; high `hash` is intentionally sent to Hold because the high controller never asks to hash content.
+Low auto-termination: `original`, `stale` (low never waits on dependencies). High auto-termination: `original`, `ready`. Connect every other relationship as listed below; high `hash` is intentionally sent to Hold because the high controller never asks to hash content.
 
 RouteTransfer handles scoped registry authentication, metadata HEAD requests and empty upload-start POSTs. Native InvokeHTTP carries the blob bytes. The low FetchBlob callback returns to RouteTransfer **before HashContent** so the source Authorization value is cleared before the diode. This clears the current attribute value; it cannot erase earlier provenance records. The high controller checks dependencies before manifest PUT, commits by digest first and then by tag.
 
@@ -253,7 +255,7 @@ HashContent writes `content_SHA-256`; RouteTransfer compares it and the FlowFile
 | Fail on Nonnumerical Overwrite | `false` |
 | Reuse Mode | `fail` |
 
-Set the same properties on the high card. RouteTransfer sets `registry.retry.max` to `3` for transient HTTP errors or `120` for missing manifest dependencies. With `30 sec` penalties, 120 retries is roughly an hour plus work/queue delay; it is not an exact wall-clock timeout. Retries return to RouteTransfer for fresh metadata/authentication; exhausted or malformed retries go to Hold. Auto-terminate nothing.
+Set the same properties on the high card. RouteTransfer sets `registry.retry.max` to `3` for transient HTTP errors, so they reach Hold after about 1.5 minutes. A manifest or index whose layers or platform manifests have not all arrived **waits quietly**: RouteTransfer checks its dependencies 30 seconds after the first attempt, then after 1, 2, 4, 8 and 16 minutes, then every 30 minutes, and passes through RetryTransfer without any registry request between checks. It logs nothing while it waits; the reason is on the FlowFile as `registry.error`. When the wait exceeds **Stale After Hours** it goes to `stale` with one warning naming the image, platform, missing layer numbers and check code. Exhausted or malformed retries go to Hold. Auto-terminate nothing.
 
 ### Both Hold cards — UpdateAttribute
 
@@ -274,7 +276,7 @@ Apply these properties to **all** low/high connections and the optional test bri
 
 | Connection setting | Value |
 |---|---|
-| Back pressure object threshold | `20` |
+| Back pressure object threshold | `20` (`10000` on `RouteTransferToStaleImages`: stale manifests are a few KB each and must never stop RouteTransfer) |
 | Back pressure data size threshold | `20 GB` |
 | FlowFile expiration | `0 sec` (never expire retained failures) |
 | Prioritizers | None |
@@ -304,7 +306,7 @@ Apply these properties to **all** low/high connections and the optional test bri
 | L15 | RetryTransfer | `retry` | RouteTransfer | `RetryTransferToRouteTransfer` |
 | L16 | RetryTransfer | `retries_exceeded`, `failure` | Hold | `RetryTransferToHold` |
 
-### High-side wiring — 7 connections
+### High-side wiring — 8 connections
 
 | # | Source | Selected relationships | Destination | Connection name |
 |---|---|---|---|---|
@@ -315,6 +317,7 @@ Apply these properties to **all** low/high connections and the optional test bri
 | H5 | UploadContent | `Original`, `No Retry`, `Retry`, `Failure` | RouteTransfer | `UploadContentToRouteTransfer` |
 | H6 | RetryTransfer | `retry` | RouteTransfer | `RetryTransferToRouteTransfer` |
 | H7 | RetryTransfer | `retries_exceeded`, `failure` | Hold | `RetryTransferToHold` |
+| H8 | RouteTransfer | `stale` | StaleImages | `RouteTransferToStaleImages` |
 
 ### Complete auto-termination checklist
 
@@ -332,6 +335,7 @@ Apply these properties to **all** low/high connections and the optional test bri
 | High | UploadContent | `Response` |
 | High | RetryTransfer | None |
 | High | Hold | `success` (processor remains disabled) |
+| High | StaleImages | `success` (processor remains disabled) |
 
 In the processor relationship settings, leave every other relationship connected; do not also select automatic relationship retries. No disconnected relationship may remain unterminated.
 
@@ -363,6 +367,7 @@ These are actual card positions from the screenshots. They are top-left canvas c
 | High | UploadContent | -256 | 400 |
 | High | RetryTransfer | 256 | 400 |
 | High | Hold | 0 | 640 |
+| High | StaleImages | 512 | 640 |
 
 Select a connection to expose its handles, drag bend handles into free lanes, and drag its label away from overlaps. The two FetchBlob→RouteTransfer connections must have separate paths/labels. Arrow direction and the wiring tables determine behaviour; bends only affect readability. The [low](../flows/compact-layer-low-mcp-spec.json) and [high](../flows/compact-layer-high-mcp-spec.json) JSON files are **NiFi MCP flow specs**, not native NiFi UI import files. They omit credentials and optional trust services; bind your contexts, set trust if needed, and disable Hold before starting an imported flow. Automatic layout can replace manual bends.
 
@@ -439,6 +444,7 @@ Keep failed bytes in place while you read the bulletin and `registry.error`. Do 
 | Checksum/registry/allowlist failure | Fix the request or context and send a corrected request; inspect the retained original |
 | Hash or size mismatch | Hold the bytes; resend from the trusted source rather than accepting the mismatch |
 | High side stops moving; `RouteTransferToHold` or `RetryTransferToHold` shows 20 queued | Back pressure. Each Hold queue stops its source at 20 FlowFiles, and a stopped RouteTransfer stops the whole high side, including new arrivals from the diode. Find the reason in the held FlowFiles' `registry.error`, fix it, then empty or replay the Hold queues. Alert on any FlowFile in a Hold queue so this is seen at 1, not at 20. |
+| Image never appears; one warning `… incomplete: missing layers N of M … moved to stale` | Layers were lost across the diode. The manifest is in `StaleImages`; resend the image or the named layers from the low side, then move the stale manifest back to RouteTransfer (or let the resent manifest commit). A replayed stale manifest starts a fresh wait. |
 | Foreign upload URL | Refused by this compact controller; use a compatible registry or a separately reviewed transfer option |
 | Registry shows upload POSTs but no layer PUTs | The native InvokeHTTP cannot reach the registry: no `RegistryTrust` on it (`PKIX path building failed`), or a Basic registry without Request Username/Password (HTTP 401), or a Basic registry whose InvokeHTTP still has the `Authorization` dynamic property (HTTP 400 from the proxy, logged by ingress-nginx as request `"-"`). The controller logs each retry reason as a warning bulletin. |
 | Missing layers on high | Read the human image/platform/layer numbers/check code; resend those layers below |
