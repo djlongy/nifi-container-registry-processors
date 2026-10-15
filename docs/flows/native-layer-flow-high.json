@@ -1840,48 +1840,40 @@
         "identifier": "33fbd0e8-5baf-3a4e-8b86-b70b2d562764",
         "instanceIdentifier": "3921a31a-01a1-1000-87a0-0b189ea35141",
         "name": "hold",
-        "comments": "Stopped on purpose: failed FlowFiles wait here with their content",
+        "comments": "Disabled on purpose: failed FlowFiles wait here with their content",
         "position": {
           "x": 0.0,
           "y": 5720.0
         },
-        "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+        "type": "org.apache.nifi.processors.standard.LogMessage",
         "bundle": {
           "group": "org.apache.nifi",
-          "artifact": "nifi-update-attribute-nar",
+          "artifact": "nifi-standard-nar",
           "version": "2.12.0"
         },
         "properties": {
-          "Delete Attributes Expression": null,
-          "Store State": "Do not store state",
-          "Cache Value Lookup Cache Size": "100",
-          "Stateful Variables Initial Value": null
+          "Log Level": "warn",
+          "Log Prefix": "hold: ",
+          "Log Message": "discarded ${repository}@${digest}: ${registry.error:replaceNull(${execution.error})}"
         },
         "propertyDescriptors": {
-          "Delete Attributes Expression": {
-            "name": "Delete Attributes Expression",
-            "displayName": "Delete Attributes Expression",
+          "Log Level": {
+            "name": "Log Level",
+            "displayName": "Log Level",
             "identifiesControllerService": false,
             "sensitive": false,
             "dynamic": false
           },
-          "Store State": {
-            "name": "Store State",
-            "displayName": "Store State",
+          "Log Prefix": {
+            "name": "Log Prefix",
+            "displayName": "Log Prefix",
             "identifiesControllerService": false,
             "sensitive": false,
             "dynamic": false
           },
-          "Cache Value Lookup Cache Size": {
-            "name": "Cache Value Lookup Cache Size",
-            "displayName": "Cache Value Lookup Cache Size",
-            "identifiesControllerService": false,
-            "sensitive": false,
-            "dynamic": false
-          },
-          "Stateful Variables Initial Value": {
-            "name": "Stateful Variables Initial Value",
-            "displayName": "Stateful Variables Initial Value",
+          "Log Message": {
+            "name": "Log Message",
+            "displayName": "Log Message",
             "identifiesControllerService": false,
             "sensitive": false,
             "dynamic": false
@@ -1899,7 +1891,7 @@
         "autoTerminatedRelationships": [
           "success"
         ],
-        "scheduledState": "ENABLED",
+        "scheduledState": "DISABLED",
         "retryCount": 10,
         "retriedRelationships": [],
         "backoffMechanism": "PENALIZE_FLOWFILE",
@@ -2102,7 +2094,7 @@
         "identifier": "fb1d42f3-44cf-303d-9bc5-cef048bf419e",
         "instanceIdentifier": "3921a22b-01a1-1000-d4dc-a20d7eb68a7a",
         "name": "dst bearer header",
-        "comments": "Deleted straight after the PUT",
+        "comments": "Deletes the token straight after the PUT",
         "position": {
           "x": 0.0,
           "y": 4180.0
@@ -2954,7 +2946,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "retry"
       },
       {
         "identifier": "8e2b4216-3625-30fc-9355-1109952288fe",
@@ -2988,7 +2981,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "success"
       },
       {
         "identifier": "b6bdd5ec-bb00-3154-b4ff-a6d69129cfd0",
@@ -3022,7 +3016,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "unmatched"
       },
       {
         "identifier": "dc64c85b-b4e6-3f3d-95ef-efc82c5e98a2",
@@ -3057,7 +3052,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "failure, retries_exceeded"
       },
       {
         "identifier": "abe969f2-fd72-3519-b200-573ca5b1eb31",
@@ -3091,7 +3087,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "success"
       },
       {
         "identifier": "e028f567-8c02-36b5-aed9-e515fb81495a",
@@ -3125,7 +3122,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "incomplete"
       },
       {
         "identifier": "13856ffd-e63f-36c7-8f6f-d27f0b6b9c61",
@@ -3159,7 +3157,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "mint"
       },
       {
         "identifier": "c7d3d4c9-bf37-3db8-88b1-29c8d8afa122",
@@ -3185,7 +3184,7 @@
         "selectedRelationships": [
           "missing"
         ],
-        "backPressureObjectThreshold": 10,
+        "backPressureObjectThreshold": 10000,
         "backPressureDataSizeThreshold": "1 GB",
         "flowFileExpiration": "0 sec",
         "prioritizers": [],
@@ -3193,7 +3192,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "missing"
       },
       {
         "identifier": "b2438b0e-20d7-3a93-ae66-15bb02a46fa2",
@@ -3229,7 +3229,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "Failure, No Retry, Retry"
       },
       {
         "identifier": "52bdd9dd-abc7-3b86-b6c8-33b31aeb21da",
@@ -3247,7 +3248,7 @@
           "type": "PROCESSOR",
           "groupId": "b7e78989-b964-377b-a350-26909e785a49",
           "name": "dst bearer header",
-          "comments": "Deleted straight after the PUT",
+          "comments": "Deletes the token straight after the PUT",
           "instanceIdentifier": "3921a22b-01a1-1000-d4dc-a20d7eb68a7a"
         },
         "labelIndex": 1,
@@ -3263,7 +3264,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "Original"
       },
       {
         "identifier": "012532f5-a800-3057-95b0-36d2fece49f4",
@@ -3297,7 +3299,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "Retry"
       },
       {
         "identifier": "0ae0b97b-ac86-3c3e-b7eb-1bc160b8d47d",
@@ -3331,7 +3334,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "original"
       },
       {
         "identifier": "fb91e4da-c141-30fd-a503-6c1487afb991",
@@ -3365,7 +3369,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "done"
       },
       {
         "identifier": "b52d35bf-257e-316a-8f7b-769cee90cdc4",
@@ -3399,7 +3404,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "No Retry"
       },
       {
         "identifier": "00b38a2b-e8fa-386a-82e5-7c1f8c3f6da6",
@@ -3432,7 +3438,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "from diode"
       },
       {
         "identifier": "9faaf24a-5017-3a0b-9124-e94f38c7fd6f",
@@ -3466,7 +3473,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "unmatched"
       },
       {
         "identifier": "19974c1b-06c1-34cd-afd6-15de571ca6cf",
@@ -3476,7 +3484,7 @@
           "type": "PROCESSOR",
           "groupId": "b7e78989-b964-377b-a350-26909e785a49",
           "name": "dst bearer header",
-          "comments": "Deleted straight after the PUT",
+          "comments": "Deletes the token straight after the PUT",
           "instanceIdentifier": "3921a22b-01a1-1000-d4dc-a20d7eb68a7a"
         },
         "destination": {
@@ -3500,7 +3508,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "success"
       },
       {
         "identifier": "8ef58788-8565-3adc-b0cf-db2b2e80f6f0",
@@ -3534,7 +3543,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "retry"
       },
       {
         "identifier": "b08e0bb6-f4e3-3fb8-acd9-0789e99d700a",
@@ -3568,7 +3578,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "exists"
       },
       {
         "identifier": "9096da07-7ff9-32d3-a339-60fa4265b502",
@@ -3602,7 +3613,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "Original"
       },
       {
         "identifier": "b08f8b60-1c8d-3372-8159-0f06a31cc8ed",
@@ -3637,7 +3649,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "No Retry, Original"
       },
       {
         "identifier": "863905c4-9caf-3c08-9bef-1b10a2b5aef2",
@@ -3671,7 +3684,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "Original"
       },
       {
         "identifier": "51c59551-1d93-3cb4-abbc-0466d2cb299e",
@@ -3705,7 +3719,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "unmatched"
       },
       {
         "identifier": "62009b3c-c864-3f2d-9280-f6604a3b9403",
@@ -3739,7 +3754,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "success"
       },
       {
         "identifier": "d429d0f6-9f37-323c-bc17-7e3a22395828",
@@ -3773,7 +3789,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "success"
       },
       {
         "identifier": "062d78f1-e218-3637-b2b8-e6c318f589be",
@@ -3807,7 +3824,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "Failure"
       },
       {
         "identifier": "172daf0b-96ff-3696-9bbf-8dba65917948",
@@ -3825,7 +3843,7 @@
           "type": "PROCESSOR",
           "groupId": "b7e78989-b964-377b-a350-26909e785a49",
           "name": "hold",
-          "comments": "Stopped on purpose: failed FlowFiles wait here with their content",
+          "comments": "Disabled on purpose: failed FlowFiles wait here with their content",
           "instanceIdentifier": "3921a31a-01a1-1000-87a0-0b189ea35141"
         },
         "labelIndex": 1,
@@ -3841,7 +3859,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "success"
       },
       {
         "identifier": "da2a8636-4052-385b-a0db-8e2303adc8d3",
@@ -3875,7 +3894,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "manifest"
       },
       {
         "identifier": "460ba988-3497-3731-bc4a-da64e3f8882f",
@@ -3909,7 +3929,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "Failure"
       },
       {
         "identifier": "33d46872-9c8e-3d62-87fb-ea12cb62cc15",
@@ -3943,7 +3964,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "success"
       },
       {
         "identifier": "6a4d4406-c9d9-38c3-ae83-0f3b31c52bd6",
@@ -3977,7 +3999,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "blob"
       },
       {
         "identifier": "a973629c-00b7-35e2-9278-4426dc335fb6",
@@ -4011,7 +4034,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "No Retry"
       },
       {
         "identifier": "9fd072a8-1c5f-32e0-9be0-af655cdb52db",
@@ -4045,7 +4069,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "success"
       },
       {
         "identifier": "4edcaf67-473d-3961-ae45-3239ba674ca3",
@@ -4079,7 +4104,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "unauthorized"
       },
       {
         "identifier": "14d7a46d-e0ae-3101-8cb6-903b6018cb37",
@@ -4114,7 +4140,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "failure, retries_exceeded"
       },
       {
         "identifier": "7a05a94d-280c-3bb4-be61-41641f15e1a5",
@@ -4148,7 +4175,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "ok"
       },
       {
         "identifier": "1cc376e1-54d4-3b0c-ae2e-626f62dfe08b",
@@ -4182,7 +4210,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "unauthorized"
       },
       {
         "identifier": "0613e40a-840c-39b9-ae24-9ca18b5e5f82",
@@ -4216,7 +4245,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "unmatched"
       },
       {
         "identifier": "06ee2ef4-001e-3e75-87eb-76dc1993368b",
@@ -4251,7 +4281,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "reuse, unmatched"
       },
       {
         "identifier": "7104bcb2-dd44-301a-ac9d-25df984d19ba",
@@ -4285,7 +4316,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "Failure"
       },
       {
         "identifier": "158ba02b-b6b1-34fc-aef9-06f99c6c6033",
@@ -4319,7 +4351,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "Retry"
       },
       {
         "identifier": "7704de36-caa2-32b7-a29c-d2616747b5ab",
@@ -4353,7 +4386,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "Retry"
       },
       {
         "identifier": "b6f37b29-2ad0-381a-90e4-56d7e735c9b2",
@@ -4387,7 +4421,8 @@
         "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
         "loadBalanceCompression": "DO_NOT_COMPRESS",
         "componentType": "CONNECTION",
-        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49"
+        "groupIdentifier": "b7e78989-b964-377b-a350-26909e785a49",
+        "name": "unmatched"
       }
     ],
     "labels": [],
