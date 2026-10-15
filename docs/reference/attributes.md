@@ -9,7 +9,7 @@ updated: 2026-10-15
 
 ## Webhook headers (read by ListenHTTP, kept as attributes)
 
-ListenHTTP turns them into attributes with HTTP Headers to receive as Attributes (Regex) `X-.*`.
+ListenHTTP turns them into attributes with HTTP Headers for Attributes `X-.*`.
 
 | Header | Used by | Purpose |
 |---|---|---|

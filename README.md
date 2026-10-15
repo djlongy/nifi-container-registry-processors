@@ -8,7 +8,9 @@ The earlier NAR releases (v1.x on GitHub) are no longer maintained. The Python p
 
 ## More documentation
 
-For **PLANA native layer transfer**, use the [complete by-hand build with low/high canvas screenshots](docs/runbooks/nifi-by-hand-compact-layer-flow.md). It includes every property, relationship, connection and recovery step.
+For **PLANA native layer transfer**, use the [by-hand build guide, split into a low-side and a high-side part, with canvas screenshots](docs/runbooks/nifi-by-hand-compact-layer-flow.md). Each side lists its own properties changed from default, connections and recovery steps.
+
+For what each processor requires of its input (body fields, attributes and headers, and the error text and relationship when they are missing or wrong), see the [input contract](docs/reference/contract.md).
 
 [docs/README.md](docs/README.md) maps the decision records (why Python, where the tar lives, parameters, one tar or many, webhook trust), the click-by-click runbook, the testing checklist and the attribute reference.
 
