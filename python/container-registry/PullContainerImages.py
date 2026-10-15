@@ -78,10 +78,26 @@ def short(digest):
     return digest[7:23]
 
 
+def pending_images(batch):
+    """[repository, tag, short digest] per image of an export, with the full digest added to an image named by digest
+    only: its tag is made up here and is not in the registry, so another node can rebuild it from the digest alone."""
+    return [[r, t, short(d)] + ([d] if t == "sha256-" + d[7:19] else []) for r, t, d, *_ in batch]
+
+
 @use_case(description="Export new and changed images from a low-side registry for a data diode.",
           configuration="""Set Source Registry URL, Repositories to Export (team/* or *) and Tar Output Directory. Run on the primary node
           every 15 minutes. Send success to FetchFile with Completion Strategy Delete File, then to the diode.""",
           keywords=["container", "diode", "registry", "export"])
+def _current_digest(client, repository, tag, recorded, digest):
+    """The digest a lost record's tag still stands for, or "" when the tag is gone or has moved on. digest is the
+    full digest the record holds, if any; a tag made from it (sha256-<12 hex>) is not in the registry."""
+    if not (digest and tag == "sha256-" + digest[7:19]):
+        digest = client.manifest_digest(repository, tag)
+        if not digest and re.fullmatch("sha256-[0-9a-f]{12}", tag) and recorded.startswith(tag[7:]):
+            raise RegistryError("it was named by digest and the record holds no more than a part of it")
+    return digest if digest and short(digest) == recorded else ""
+
+
 class PullContainerImages(FlowFileSource):
     class Java:
         implements = ["org.apache.nifi.python.processor.FlowFileSource"]
@@ -433,7 +449,7 @@ class PullContainerImages(FlowFileSource):
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         name = context.getProperty(self.PREFIX).getValue() + stamp + ".tar"
         pending = pending + [{"at": time.time(), "where": where, "name": name,
-                              "images": [[r, t, short(d)] for r, t, d, *_ in batch]}]
+                              "images": pending_images(batch)}]
         dump_state(state, pending)  # a state that cannot be stored fails here, before a tar is written
         return self._emit(context, client, directory, name, batch, save)
 
@@ -482,12 +498,13 @@ class PullContainerImages(FlowFileSource):
         rewrite = self._value(context, self.REWRITE)
         strip = context.getProperty(self.STRIP).getValue() == "true"
         batch, planned = [], {}
-        for repository, tag, recorded in record["images"]:
+        for repository, tag, recorded, *full in record["images"]:
             if exported.get(f"{repository}:{tag}") != recorded:
                 continue  # a later export moved this tag on
+            digest = full[0] if full else ""
             try:
-                digest = client.manifest_digest(repository, tag)
-                if not digest or short(digest) != recorded:
+                digest = _current_digest(client, repository, tag, recorded, digest)
+                if not digest:
                     continue  # gone from the registry, or moved on since: the regular run takes the tag as it is
                 key = f"{repository}@{digest}"
                 if key not in planned:
@@ -496,7 +513,8 @@ class PullContainerImages(FlowFileSource):
             except RegistryError as error:
                 # Garbage-collected, a transient failure, or a rewrite that no longer applies: forget the export so
                 # the next regular run takes the tag at whatever digest it has by then, as for any image that waits.
-                self.logger.warn(f"Not exporting {repository}:{tag}@{digest} again, it waits for the next run: {error}")
+                self.logger.warn(f"Not exporting {repository}:{tag}{'@' + digest if digest else ''} again, "
+                                 f"it waits for the next run: {error}")
                 del exported[f"{repository}:{tag}"]
                 continue
             root, children, blobs = planned[key]
@@ -508,7 +526,7 @@ class PullContainerImages(FlowFileSource):
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         name = context.getProperty(self.PREFIX).getValue() + stamp + ".tar"
         remaining = remaining + [{"at": time.time(), "where": where, "name": name,
-                                  "images": [[r, t, short(d)] for r, t, d, *_ in batch]}]
+                                  "images": pending_images(batch)}]
         dump_state(exported, remaining)
         self.logger.warn(f"{record['name']} written on {record['where']} was never fetched; exporting its "
                          f"{len(batch)} image tag(s) again")
@@ -520,8 +538,7 @@ class PullContainerImages(FlowFileSource):
                                        context.getProperty(self.ARTIFACT_TYPE).getValue(), images)
         for descriptor in context.getProperties():
             if descriptor.dynamic:
-                value = context.getProperty(descriptor).evaluateAttributeExpressions(Attributes(attributes))
-                attributes[descriptor.name] = value.getValue() or ""
+                attributes[descriptor.name] = evaluate(context.getProperty(descriptor), Attributes(attributes)) or ""
         return attributes
 
     def _leftover(self, context, client, directory):

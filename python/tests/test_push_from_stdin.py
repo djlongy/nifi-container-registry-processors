@@ -6,8 +6,11 @@ import os
 import subprocess
 import sys
 import threading
+import types
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from http_fixture import reply, serve
 
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts", "push_from_stdin.py")
 
@@ -152,6 +155,66 @@ class PushFromStdin(unittest.TestCase):
         self.assertEqual(self.run_script("blob", digest, data, password="wrong", registry=guarded).returncode, 10)
         self.assertEqual(self.run_script("blob", digest, data, password="", registry=guarded).returncode, 10)
         self.assertEqual(self.run_script("blob", digest, data, password="secret", registry=guarded).returncode, 0)
+
+    def run_url(self, url, password="secret", kind="manifest", reference="1.0", data=b'{"schemaVersion": 2}'):
+        return self.run_script(kind, reference, data, password=password, registry=types.SimpleNamespace(url=url))
+
+    def test_a_redirect_from_the_registry_never_carries_credentials(self):
+        with serve(lambda handler, seen: reply(handler, 200)) as (elsewhere, collected):
+            def registry(handler, seen):
+                if handler.headers.get("Authorization"):
+                    return reply(handler, 302, headers={"Location": elsewhere + "/capture"})
+                reply(handler, 401, headers={"WWW-Authenticate": 'Basic realm="x"'})
+            with serve(registry) as (url, _):
+                done = self.run_url(url)
+        self.assertEqual(done.returncode, 15, done.stderr)
+        self.assertEqual(collected.requests, [])
+
+    def test_a_token_realm_that_redirects_never_gets_the_credentials_forwarded(self):
+        with serve(lambda handler, seen: reply(handler, 200)) as (elsewhere, collected):
+            def registry(handler, seen):
+                if handler.path.startswith("/token"):
+                    return reply(handler, 302, headers={"Location": elsewhere + "/capture"})
+                reply(handler, 401, headers={"WWW-Authenticate": f'Bearer realm="http://127.0.0.1:{handler.server.server_port}/token"'})
+            with serve(registry) as (url, _):
+                done = self.run_url(url)
+        self.assertEqual(done.returncode, 15, done.stderr)
+        self.assertEqual(collected.requests, [])
+
+    def test_a_token_realm_on_another_host_over_plain_http_gets_no_credentials(self):
+        with serve(lambda handler, seen: reply(handler, 200, b'{"token": "t"}')) as (elsewhere, collected):
+            realm = elsewhere.replace("127.0.0.1", "localhost") + "/token"
+            with serve(lambda handler, seen: reply(handler, 401, headers={"WWW-Authenticate": f'Bearer realm="{realm}"'})) as (url, _):
+                done = self.run_url(url)
+        self.assertEqual(done.returncode, 10, done.stderr)
+        self.assertIn(b"not https", done.stderr)
+        self.assertEqual(collected.requests, [])
+
+    def test_a_token_realm_on_the_registrys_own_plain_http_origin_is_used(self):
+        def registry(handler, seen):
+            if handler.path.startswith("/token"):
+                return reply(handler, 200, b'{"token": "issued"}')
+            if handler.headers.get("Authorization") == "Bearer issued":
+                return reply(handler, 201)
+            reply(handler, 401, headers={"WWW-Authenticate": f'Bearer realm="http://127.0.0.1:{handler.server.server_port}/token"'})
+        with serve(registry) as (url, seen):
+            done = self.run_url(url)
+        self.assertEqual(done.returncode, 0, done.stderr)
+
+    def test_a_repository_or_reference_that_is_not_a_plain_name_is_refused_before_any_request(self):
+        digest = "sha256:" + "a" * 64
+        cases = [("blob", "team/app", "latest"), ("blob", "team/app", digest + "/../x"),
+                 ("manifest", "team/app", "../../x"), ("manifest", "team/app", "a?b=c"), ("manifest", "team/app", "a/b")]
+        cases += [(kind, repository, digest) for kind in ("blob", "manifest")
+                  for repository in ["../admin", "team/app?x=1", "team//app", "Team/App", "team/app/../x", "team/app#f", "a b"]]
+        with serve(lambda handler, seen: reply(handler, 200)) as (url, seen):
+            for kind, repository, reference in cases:
+                with self.subTest(kind=kind, repository=repository, reference=reference):
+                    env = {**os.environ, "REGISTRY_USER": "robot", "REGISTRY_PASSWORD": ""}
+                    done = subprocess.run([sys.executable, SCRIPT, kind, url, repository, reference], input=b"{}",
+                                          capture_output=True, env=env, timeout=60)
+                    self.assertEqual(done.returncode, 15, done.stderr)
+        self.assertEqual(seen.requests, [])
 
     def test_bad_arguments_and_an_unreachable_registry_exit_15(self):
         self.assertEqual(subprocess.run([sys.executable, SCRIPT, "blob"], capture_output=True).returncode, 15)
