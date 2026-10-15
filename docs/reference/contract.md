@@ -30,11 +30,11 @@ If a RouteOnAttribute rule tests an attribute that the GenerateFlowFile does not
 
 | Feeds | Content (Custom Text) | Dynamic properties to add |
 |---|---|---|
-| PlanRegistryTransfer in reference mode (for example the `ResendImage` card) | Ignored. `{}` | `registry.image.reference`, which is the only attribute PlanRegistryTransfer needs, **plus the full `X-*` set** when anything downstream routes on it (see below). Add `transfer.id`, `registry.layers`, `registry.check` and `registry.platform` when you need them, see [PlanRegistryTransfer](#planregistrytransfer) |
+| PlanRegistryTransfer in reference mode (for example the GenerateFlowFile card that the runbook suggests naming `ResendImage`) | Ignored. `{}` | `registry.image.reference`, which is the only attribute PlanRegistryTransfer needs, **plus the full `X-*` set** when anything downstream routes on it (see below). Add `transfer.id`, `registry.layers`, `registry.check` and `registry.platform` when you need them, see [PlanRegistryTransfer](#planregistrytransfer) |
 | PlanRegistryTransfer in webhook mode, or ExportContainerImages, directly | The request body, byte for byte | `X-Sha256` |
 | The same, behind a RouteOnAttribute on `X-Artifact-Type` (the flow in [QUICKSTART.md](../../QUICKSTART.md)) | The request body, byte for byte | `X-Sha256` and `X-Artifact-Type` |
 
-PlanRegistryTransfer in reference mode reads none of the webhook headers itself. **A stand-in card must still carry the full `X-*` set of the real webhook whenever anything downstream routes on them**: a RouteOnAttribute, or a person reading the FlowFile attributes. The `ResendImage` card in the image transfer flow carries all of them: `X-Artifact-Type` = `container-images-request`, `X-Artifact-Format` = `json`, `X-Sha256` (the sha256 of its Custom Text `{}`, `44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a`), `X-Registry` = `registry.example.com`, `X-Image-Count` = `1`, `X-CI-Project` = `manual-resend`, `X-CI-Pipeline-Url` = `none` and `X-CI-Commit-Sha` = `none`, next to `registry.image.reference`. See [the table below](#the-complete-webhook-attribute-set) for what each one is.
+PlanRegistryTransfer in reference mode reads none of the webhook headers itself. **A stand-in card must still carry the full `X-*` set of the real webhook whenever anything downstream routes on them**: a RouteOnAttribute, or a person reading the FlowFile attributes. The GenerateFlowFile card in the image transfer flow (suggested name `ResendImage`) carries all of them: `X-Artifact-Type` = `container-images-request`, `X-Artifact-Format` = `json`, `X-Sha256` (the sha256 of its Custom Text `{}`, `44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a`), `X-Registry` = `registry.example.com`, `X-Image-Count` = `1`, `X-CI-Project` = `manual-resend`, `X-CI-Pipeline-Url` = `none` and `X-CI-Commit-Sha` = `none`, next to `registry.image.reference`. See [the table below](#the-complete-webhook-attribute-set) for what each one is.
 
 ### The complete webhook attribute set
 
@@ -145,13 +145,13 @@ The same JSON body and the same checks as [ExportContainerImages](#body): `regis
 
 ## RouteRegistryTransfer
 
-A FlowFileTransform: input is required. It reads the **job** attributes, and on the low side's first pass the job JSON in the content. A FlowFile reaches it from SplitJobs (low, first pass), from the native InvokeHTTP callbacks and RetryTransfer (both sides), and from the diode (high, first pass). Relationships: `prepared`, `unverified`, `complete`, `retryable`, `waiting`, `stale`, `failure`.
+A FlowFileTransform: input is required. It reads the **job** attributes, and on the low side's first pass the job JSON in the content. A FlowFile reaches it from SplitJson (low, first pass), from the native InvokeHTTP callbacks and RetryFlowFile (both sides), and from the diode (high, first pass). Relationships: `prepared`, `unverified`, `complete`, `retryable`, `waiting`, `stale`, `failure`.
 
-Most refusals are a `RegistryError`: the processor sends the FlowFile to `retryable` with `registry.retry.max` = `3`, so RetryTransfer retries it three times and then sends it to `retries_exceeded`. Only the three Python exception types `ValueError`, `KeyError` and `TypeError` (a missing or malformed field) go to `failure` with `invalid registry job: {exception name}`.
+Most refusals are a `RegistryError`: the processor sends the FlowFile to `retryable` with `registry.retry.max` = `3`, so RetryFlowFile retries it three times and then sends it to `retries_exceeded`. Only the three Python exception types `ValueError`, `KeyError` and `TypeError` (a missing or malformed field) go to `failure` with `invalid registry job: {exception name}`.
 
 ### Low side, first pass: the job JSON in the content
 
-Used when the FlowFile has no `registry.kind` attribute. SplitJobs produces it. Content larger than 64 MiB is refused with `registry job exceeds 64 MiB` (`retryable`).
+Used when the FlowFile has no `registry.kind` attribute. SplitJson produces it. Content larger than 64 MiB is refused with `registry job exceeds 64 MiB` (`retryable`).
 
 | Field | Type | Required | Format | If missing or wrong |
 |---|---|---|---|---|
@@ -177,28 +177,28 @@ On the high side these arrive from the low side through the diode unchanged.
 
 | Attribute | Required | Format | Normally set by | If missing or wrong |
 |---|---|---|---|---|
-| `registry.kind` | Required | `blob`, `config`, `manifest` or `index` | RouteTransfer (low) | `retryable`, `unknown registry job kind` |
-| `registry.repository` | Required | A repository name | RouteTransfer (low) | `retryable`, `invalid registry repository or digest` |
-| `registry.digest` | Required | `sha256:` and 64 lowercase hex characters | RouteTransfer (low) | `retryable`, `invalid registry repository or digest` |
-| `registry.size` | Required | Digits only. The exact content size in bytes | RouteTransfer (low) | `retryable`, `invalid registry job size`. On the high side a content size that differs: `failure`, `received content size differs from the planned job`. After the low hash, `failure`, `content digest or size differs from the planned job` |
-| `registry.media.type` | Required for `manifest` and `index` | A manifest media type such as `application/vnd.oci.image.manifest.v1+json` | RouteTransfer (low) | `retryable`, `unsupported manifest media type`. For other kinds it is read but not checked |
-| `registry.reference` | Required for `manifest` and `index` | The tag, or the digest when the manifest has no tag | RouteTransfer (low) | A reference that is not a tag and not the digest: `retryable`, `invalid manifest tag` |
-| `registry.needs` | Required for `manifest` and `index` | A JSON array of up to 1000 `sha256:` digests | RouteTransfer (low) | Missing: `failure`, `invalid registry job: TypeError`. Not an array or too long: `retryable`, `invalid manifest dependencies`. An item that is not a digest: `retryable`, `invalid dependency digest` |
-| `registry.image` | Optional | `repository:tag`. Used in the message | RouteTransfer (low) | Shown as `None` in messages |
-| `registry.platform` | Optional | `os/architecture[/variant]`, or `-` | RouteTransfer (low) | Shown as `None` in messages |
-| `registry.check` | Optional | 8 hex characters | RouteTransfer (low) | Shown as `None` in messages |
-| `registry.layer.count` | Optional | Digits | RouteTransfer (low) | Not read |
+| `registry.kind` | Required | `blob`, `config`, `manifest` or `index` | RouteRegistryTransfer (low) | `retryable`, `unknown registry job kind` |
+| `registry.repository` | Required | A repository name | RouteRegistryTransfer (low) | `retryable`, `invalid registry repository or digest` |
+| `registry.digest` | Required | `sha256:` and 64 lowercase hex characters | RouteRegistryTransfer (low) | `retryable`, `invalid registry repository or digest` |
+| `registry.size` | Required | Digits only. The exact content size in bytes | RouteRegistryTransfer (low) | `retryable`, `invalid registry job size`. On the high side a content size that differs: `failure`, `received content size differs from the planned job`. After the low hash, `failure`, `content digest or size differs from the planned job` |
+| `registry.media.type` | Required for `manifest` and `index` | A manifest media type such as `application/vnd.oci.image.manifest.v1+json` | RouteRegistryTransfer (low) | `retryable`, `unsupported manifest media type`. For other kinds it is read but not checked |
+| `registry.reference` | Required for `manifest` and `index` | The tag, or the digest when the manifest has no tag | RouteRegistryTransfer (low) | A reference that is not a tag and not the digest: `retryable`, `invalid manifest tag` |
+| `registry.needs` | Required for `manifest` and `index` | A JSON array of up to 1000 `sha256:` digests | RouteRegistryTransfer (low) | Missing: `failure`, `invalid registry job: TypeError`. Not an array or too long: `retryable`, `invalid manifest dependencies`. An item that is not a digest: `retryable`, `invalid dependency digest` |
+| `registry.image` | Optional | `repository:tag`. Used in the message | RouteRegistryTransfer (low) | Shown as `None` in messages |
+| `registry.platform` | Optional | `os/architecture[/variant]`, or `-` | RouteRegistryTransfer (low) | Shown as `None` in messages |
+| `registry.check` | Optional | 8 hex characters | RouteRegistryTransfer (low) | Shown as `None` in messages |
+| `registry.layer.count` | Optional | Digits | RouteRegistryTransfer (low) | Not read |
 
 ### Attributes the processor reads on a callback
 
 | Attribute | Set by | Meaning | If missing or wrong |
 |---|---|---|---|
-| `registry.stage` | RouteTransfer | `fetch`, `verify`, `upload`, `manifest-digest` or `manifest-tag`. Empty for a new job. Do not set by hand | Empty: the FlowFile is treated as a new job |
+| `registry.stage` | RouteRegistryTransfer | `fetch`, `verify`, `upload`, `manifest-digest` or `manifest-tag`. Empty for a new job. Do not set by hand | Empty: the FlowFile is treated as a new job |
 | `invokehttp.status.code` | InvokeHTTP | The HTTP status of the native request | Missing counts as `0`. `0`, `401`, `408`, `429` and `5xx`: `retryable`, `native {stage} failed (HTTP {status}); retry with fresh authentication`. Other codes: `failure`, `native {stage} refused (HTTP {status})` |
 | `content_SHA-256` | CryptographicHashContent | The digest of the downloaded bytes, without `sha256:` | Missing or different: `failure`, `content digest or size differs from the planned job` |
 | `resp.Docker-Content-Digest` (or `resp.docker-content-digest`) | InvokeHTTP, **Response Header Request Attributes Prefix** `resp.` | The digest the destination reports for a manifest PUT | Missing or different: `failure`, `destination manifest digest differs from the planned job` |
-| `registry.manifest.tag.url` | RouteTransfer | The tag PUT that follows the digest PUT | Set by the processor |
-| `registry.wait.since`, `registry.wait.checks`, `registry.wait.next` | RouteTransfer | The wait bookkeeping of a manifest waiting for layers | Set by the processor. Cleared when the manifest goes to `stale` |
+| `registry.manifest.tag.url` | RouteRegistryTransfer | The tag PUT that follows the digest PUT | Set by the processor |
+| `registry.wait.since`, `registry.wait.checks`, `registry.wait.next` | RouteRegistryTransfer | The wait bookkeeping of a manifest waiting for layers | Set by the processor. Cleared when the manifest goes to `stale` |
 
 ### Other refusals
 
