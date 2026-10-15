@@ -91,12 +91,12 @@ Use **Add Processor**, search for the type, select the exact version, then **Con
 | Low | FetchBlob | InvokeHTTP | 2.12.0 | Stopped while configuring |
 | Low | HashContent | CryptographicHashContent | 2.12.0 | Stopped while configuring |
 | Low | RetryTransfer | RetryFlowFile | 2.12.0 | Stopped while configuring |
-| Low | Hold | UpdateAttribute | 2.12.0 | **Disabled** |
+| Low | Hold | LogMessage | 2.12.0 | **Disabled** |
 | High | RouteTransfer | RouteRegistryTransfer | 1.5.1 | Stopped while configuring |
 | High | UploadContent | InvokeHTTP | 2.12.0 | Stopped while configuring |
 | High | RetryTransfer | RetryFlowFile | 2.12.0 | Stopped while configuring |
-| High | Hold | UpdateAttribute | 2.12.0 | **Disabled** |
-| High | StaleImages | UpdateAttribute | 2.12.0 | **Disabled** |
+| High | Hold | LogMessage | 2.12.0 | **Disabled** |
+| High | StaleImages | LogMessage | 2.12.0 | **Disabled** |
 
 Set these common settings on every processor (including the disabled Holds):
 
@@ -106,7 +106,7 @@ Set these common settings on every processor (including the disabled Holds):
 | Scheduling → Run schedule | `0 sec` |
 | Scheduling → Execution | All nodes |
 | Scheduling → Concurrent tasks | `1` to start; measure disk/network throughput before increasing |
-| Scheduling → Run duration | `0 ms` for standard processors except UpdateAttribute; `25 ms` for both Python types and UpdateAttribute |
+| Scheduling → Run duration | `0 ms` for standard processors; `25 ms` for both Python types |
 | Settings → Penalty duration | `30 sec` |
 | Settings → Yield duration | `1 sec` |
 | Settings → Bulletin level | `WARN` |
@@ -269,14 +269,15 @@ HashContent writes `content_SHA-256`; RouteTransfer compares it and the FlowFile
 
 Set the same properties on the high card. RouteTransfer sets `registry.retry.max` to `3` for transient HTTP errors, so they reach Hold after about 1.5 minutes. A manifest or index whose layers or platform manifests have not all arrived **waits quietly**: RouteTransfer checks its dependencies 30 seconds after the first attempt, then after 1, 2, 4, 8 and 16 minutes, then every 30 minutes, and passes through RetryTransfer without any registry request between checks. It logs nothing while it waits; the reason is on the FlowFile as `registry.error`. When the wait exceeds **Stale After Hours** it goes to `stale` with one warning naming the image, platform, missing layer numbers and check code. Exhausted or malformed retries go to Hold. Auto-terminate nothing.
 
-### Both Hold cards — UpdateAttribute
+### Hold and StaleImages cards — LogMessage
+
+A queue the operator inspects before anything is discarded ends at a **LogMessage** processor kept **disabled**: FlowFiles wait in its input queue with their content and attributes. Enabling it logs each one at WARN, with what it was and why it stopped, and discards it (`success` is auto-terminated), so the log records every discard.
 
 | Property | Recommended/example value |
 |---|---|
-| Delete Attributes Expression | **Leave blank** |
-| Store State | `Do not store state` |
-| Stateful Variables Initial Value | **Leave blank** |
-| Cache Value Lookup Cache Size | `100` |
+| Log Level | `warn` |
+| Log Prefix | `Hold: ` (`StaleImages: ` on that card) |
+| Log Message | `discarded ${registry.image} ${registry.platform} ${registry.kind} ${registry.digest}: ${registry.error}` |
 
 Do not add dynamic attributes. Auto-terminate `success`, then **Disable** the processor and leave it disabled. This retains original FlowFiles in its incoming queues, including the `registry.error` explanation.
 
@@ -467,7 +468,7 @@ Keep failed bytes in place while you read the bulletin and `registry.error`. Do 
 
 If you do not want to work with layer numbers, **resend the entire image**. Low sends its config, layers and manifest/index; high skips blobs already present and uploads the missing ones. This uses more diode bandwidth than selective recovery, but the operator enters only the repository and tag. It also sends a fresh manifest, so it works when the earlier high manifest already exhausted its retries into Hold. Keep the old held failure until you have verified the replacement; do not start Hold to discard it.
 
-Create one optional **GenerateFlowFile 2.12.0** on low, name it `ResendImage`, and connect `success` directly to `PlanTransfer`. Name that connection `ResendImageToPlanTransfer`, select `success` only, and use the common queue settings (`20` objects, `20 GB`, `0 sec` expiration, no prioritizer/load balancing). Auto-terminate nothing on the generator. This adds one manual recovery card to the eight-card low flow; you can keep it disabled when idle. No extra UpdateAttribute processor is needed.
+Create one optional **GenerateFlowFile 2.12.0** on low, name it `ResendImage`, and connect `success` directly to `PlanTransfer`. Select `success` only (the connection is named `success`), and use the common queue settings (`20` objects, `20 GB`, `0 sec` expiration, no prioritizer/load balancing). Auto-terminate nothing on the generator. This adds one manual recovery card to the eight-card low flow; you can keep it disabled when idle. No extra UpdateAttribute processor is needed.
 
 Set every fixed property as follows:
 
