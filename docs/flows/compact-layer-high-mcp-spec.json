@@ -20,6 +20,7 @@
         "Stale After Hours": "24"
       },
       "auto_terminated": [
+        "original",
         "complete"
       ],
       "bundle": {
