@@ -93,6 +93,9 @@ class Plan:
         if not DIGEST.fullmatch(digest):
             raise RegistryError(f"unsupported descriptor digest {digest}")
         if digest in self.blobs:
+            job = self.blobs[digest]
+            if n and n != job["layer"] and n not in job.get("also", []):
+                job.setdefault("also", []).append(n)  # sent once, but a resend may name any position it holds
             return
         if not self.client.blob_exists(self.repository, digest):
             raise RegistryError(f"blob {digest} is missing")
@@ -247,10 +250,11 @@ class PlanRegistryTransfer(FlowFileTransform):
             raise RegistryError(f"refused: check code {resend['check']} does not match {check} for {label}, the tag has "
                                 "moved; nothing was sent")
         blobs = [j for j in jobs if j["kind"] in ("blob", "config")]
-        missing = sorted(resend["layers"] - {j["layer"] for j in blobs})
+        held = {j["layer"] for j in blobs} | {n for j in blobs for n in j.get("also", [])}
+        missing = sorted(resend["layers"] - held)
         if missing:
             raise RegistryError(f"{label} has no layer {missing[0]}: it has {max([j['layers'] for j in blobs] or [0])}")
-        return [j for j in blobs if j["kind"] == "config" or j["layer"] in resend["layers"]]
+        return [j for j in blobs if j["kind"] == "config" or resend["layers"] & {j["layer"], *j.get("also", [])}]
 
     def _client(self, context):
         return RegistryClient(self._value(context, self.REGISTRY_URL), self._value(context, self.USERNAME),

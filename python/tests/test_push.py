@@ -45,6 +45,70 @@ class MissingTar(unittest.TestCase):
         self.assertIn("gone.tar", processor.logger.text())
 
 
+class Named(FlowFile):
+    def __init__(self, filename):
+        self.filename = filename
+
+    def getAttribute(self, name):
+        return self.filename if name == "filename" else None
+
+
+class Contained(unittest.TestCase):
+    """Input Tar Path built from an attribute that arrives with the data must stay inside its fixed directory."""
+
+    def setUp(self):
+        self.root = os.path.realpath(tempfile.mkdtemp())
+        self.inbox = os.path.join(self.root, "in")
+        os.mkdir(self.inbox)
+        self.victim = os.path.join(self.root, "victim.tar")
+        with open(self.victim, "w") as victim:
+            victim.write("not yours")
+        original = (push_module.RegistryClient, push_module.push_export)
+        push_module.RegistryClient = lambda *args: types.SimpleNamespace(host="registry.test")
+        push_module.push_export = lambda client, tar, *rest: (1, 0, [f"read {os.path.basename(tar)}"])
+        self.addCleanup(lambda: (setattr(push_module, "RegistryClient", original[0]),
+                                 setattr(push_module, "push_export", original[1])))
+
+    def run_push(self, template, filename, delete="true"):
+        processor, context = make_push(**{"Input Tar Path": template, "Delete Input Tar": delete})
+        return processor.transform(context, Named(filename))
+
+    def test_a_filename_that_climbs_out_is_refused_and_the_file_is_not_touched(self):
+        for delete in ("true", "false"):
+            with self.subTest(delete=delete):
+                result = self.run_push(self.inbox + "/${filename}", "../victim.tar", delete)
+                self.assertEqual(result.relationship, "failure")
+                self.assertIn("outside", result.attributes["registry.error"])
+                with open(self.victim) as victim:
+                    self.assertEqual(victim.read(), "not yours")
+                self.assertEqual(os.listdir(self.root).count("victim.tar"), 1)
+
+    def test_a_symlink_that_leaves_the_directory_is_refused(self):
+        os.symlink(self.victim, os.path.join(self.inbox, "link.tar"))
+        result = self.run_push(self.inbox + "/${filename}", "link.tar")
+        self.assertEqual(result.relationship, "failure")
+        self.assertTrue(os.path.exists(self.victim))
+        self.assertTrue(os.path.islink(os.path.join(self.inbox, "link.tar")))
+
+    def test_a_leftover_beside_a_filename_outside_the_directory_is_not_adopted(self):
+        open(self.victim + ".pushing-abc", "w").close()
+        result = self.run_push(self.inbox + "/${filename}", "../victim.tar")
+        self.assertEqual(result.relationship, "failure")
+        self.assertTrue(os.path.exists(self.victim + ".pushing-abc"))
+
+    def test_a_path_with_no_fixed_directory_in_front_of_the_expression_is_refused(self):
+        result = self.run_push("${filename}", self.victim)
+        self.assertEqual(result.relationship, "failure")
+        self.assertIn("fixed directory", result.attributes["registry.error"])
+        self.assertTrue(os.path.exists(self.victim))
+
+    def test_a_filename_inside_the_directory_is_pushed_and_deleted(self):
+        open(os.path.join(self.inbox, "a.tar"), "w").close()
+        result = self.run_push(self.inbox + "/${filename}", "a.tar")
+        self.assertEqual(result.relationship, "success", result.attributes)
+        self.assertEqual(os.listdir(self.inbox), [])
+
+
 class Adopt(unittest.TestCase):
     def push(self, path):
         original = (push_module.RegistryClient, push_module.push_export)

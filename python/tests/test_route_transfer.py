@@ -44,10 +44,15 @@ class Registry:
         self.status, self.exists = 404, True
         self.upload = self.base + "/v2/team/app/blobs/uploads/id?_state=opaque"
         self.foreign, self.calls, self.header = False, [], "Bearer scoped-token"
+        self.stored = DIGEST
 
     def blob_exists(self, repository, digest):
         self.calls.append((repository, digest))
         return self.exists
+
+    def manifest_digest(self, repository, reference):
+        self.calls.append((repository, "manifest_digest", reference))
+        return self.stored
 
     def _send(self, repository, actions, method, path, headers=None):
         self.calls.append((repository, actions, method, path))
@@ -65,6 +70,21 @@ class Registry:
 
     def start_upload(self, repository):
         return self.upload
+
+
+def retry_flowfile(attributes, uuid="retry-card"):
+    """RetryFlowFile 2.12.0 as the flow wires it: Retry Attribute registry.retries, Maximum Retries
+    ${registry.retry.max}, Reuse Mode fail. Returns the relationship and the attributes it leaves."""
+    attributes = dict(attributes)
+    owner = attributes.get("registry.retries.uuid")
+    if owner and owner != uuid:
+        return "failure", attributes
+    count = attributes.get("registry.retries")
+    current = 1 if count is None else int(count) + 1
+    if current > int(attributes["registry.retry.max"]):
+        return "retries_exceeded", attributes
+    attributes.update({"registry.retries": str(current), "registry.retries.uuid": uuid})
+    return "retry", attributes
 
 
 class TransferController(unittest.TestCase):
@@ -220,6 +240,43 @@ class TransferController(unittest.TestCase):
         attrs.update({"invokehttp.status.code": "201", "resp.docker-content-digest": DIGEST})
         self.assertEqual(self.run_flow("High", attrs).relationship, "complete")
 
+    def test_a_forged_callback_cannot_redirect_the_tag_put_or_choose_its_credentials(self):
+        attrs = {**self.facts(kind="manifest"), "registry.stage": "manifest-digest", "invokehttp.status.code": "201",
+                 "resp.Docker-Content-Digest": DIGEST, "registry.auth.header": "Bearer attacker-chosen",
+                 "registry.manifest.tag.url": "https://untrusted.example/capture"}
+        result = self.run_flow("High", attrs, **{"Target Repository": "target/app"})
+        self.assertEqual(result.relationship, "prepared")
+        self.assertEqual(result.attributes["registry.http.url"], "https://registry.test/v2/target/app/manifests/latest")
+        self.assertEqual(result.attributes["registry.auth.header"], "Bearer scoped-token")
+        self.assertNotIn("untrusted", json.dumps(result.attributes))
+
+    def test_a_blob_redirected_to_storage_counts_as_present_on_the_high_side(self):
+        for status in (302, 307):
+            with self.subTest(status=status):
+                self.registry.status = status
+                self.assertEqual(self.run_flow("High", self.facts()).relationship, "complete")
+                manifest = self.run_flow("High", self.facts(kind="manifest"))
+                self.assertEqual(manifest.relationship, "prepared")
+                self.assertEqual(manifest.attributes["registry.stage"], "manifest-digest")
+
+    def test_a_redirected_manifest_head_is_not_a_present_platform_manifest(self):
+        self.registry.status = 307
+        result = self.run_flow("High", self.facts(kind="index"))
+        self.assertEqual(result.relationship, "retryable")
+
+    def test_a_registry_that_omits_docker_content_digest_is_asked_for_the_stored_digest(self):
+        base = {**self.facts(kind="manifest"), "registry.stage": "manifest-digest", "invokehttp.status.code": "201"}
+        result = self.run_flow("High", base)
+        self.assertEqual(result.attributes["registry.stage"], "manifest-tag")
+        self.assertIn(("team/app", "manifest_digest", DIGEST), self.registry.calls)
+        tagged = {**base, **result.attributes, "invokehttp.status.code": "201"}
+        self.assertEqual(self.run_flow("High", tagged).relationship, "complete")
+        self.assertIn(("team/app", "manifest_digest", "latest"), self.registry.calls)
+        self.registry.stored = "sha256:" + "b" * 64
+        self.assertEqual(self.run_flow("High", base).relationship, "failure")
+        self.registry.stored = None
+        self.assertEqual(self.run_flow("High", base).relationship, "failure")
+
     def test_a_changed_manifest_is_never_tagged(self):
         attrs = {**self.facts(kind="manifest"), "registry.stage": "manifest-digest", "invokehttp.status.code": "201",
                  "resp.Docker-Content-Digest": "sha256:" + "b" * 64}
@@ -236,6 +293,51 @@ class TransferController(unittest.TestCase):
         result = self.run_flow("Low", self.facts())
         self.assertEqual(result.relationship, "retryable")
         self.assertEqual(result.attributes["registry.retry.max"], "3")
+
+    def test_a_manifest_that_waited_still_gets_its_error_retries(self):
+        manifest = self.facts(kind="manifest", needs=json.dumps([DIGEST, DIGEST]))
+        attrs = dict(manifest)
+        for _ in range(8):
+            with patch("RouteRegistryTransfer.time.time", return_value=0.0):
+                result = self.run_flow("High", attrs)
+            self.assertEqual(result.relationship, "waiting")
+            _, attrs = retry_flowfile({**attrs, **result.attributes})
+            attrs["registry.wait.next"] = "0"
+        self.registry.status = 200  # the layers arrived
+        attrs = {**attrs, **self.run_flow("High", attrs).attributes, "registry.stage": "manifest-digest",
+                 "invokehttp.status.code": "503"}
+        for expected in ("retry", "retry", "retry", "retries_exceeded"):
+            result = self.run_flow("High", attrs)
+            self.assertEqual(result.relationship, "retryable")
+            outcome, attrs = retry_flowfile({**attrs, **result.attributes})
+            self.assertEqual(outcome, expected)
+            attrs["registry.stage"], attrs["invokehttp.status.code"] = "manifest-digest", "503"
+
+    def test_every_exit_of_a_side_clears_the_retry_owner_and_count(self):
+        owned = {"registry.retries": "2", "registry.retries.uuid": "low-retry-card", "registry.retry.max": "3"}
+        low = {**self.facts(), **owned, "registry.stage": "verify", "content_SHA-256": "a" * 64}
+        high = {**self.facts(kind="manifest"), **owned, "registry.stage": "manifest-digest",
+                "invokehttp.status.code": "201", "resp.Docker-Content-Digest": DIGEST}
+        results = [self.run_flow("Low", {**low, "registry.stage": "fetch", "invokehttp.status.code": "200"}),
+                   self.run_flow("Low", low, size=3 * 1024 ** 3),
+                   self.run_flow("High", high),
+                   self.run_flow("High", {**high, "registry.stage": "manifest-tag"}),
+                   self.run_flow("High", {**self.facts(kind="manifest", needs=json.dumps([DIGEST, DIGEST])), **owned})]
+        self.assertEqual([r.relationship for r in results], ["unverified", "complete", "prepared", "complete", "waiting"])
+        for result in results:
+            self.assertEqual(result.attributes["registry.retries.uuid"], "")
+            self.assertEqual(result.attributes["registry.retries"], "0")
+
+    def test_a_low_side_retry_does_not_fail_the_high_side_retry_card(self):
+        low = {**self.facts(), "registry.stage": "fetch", "invokehttp.status.code": "503"}
+        outcome, attrs = retry_flowfile({**low, **self.run_flow("Low", low).attributes})
+        self.assertEqual(outcome, "retry")
+        attrs.update({"registry.stage": "verify", "content_SHA-256": "a" * 64})
+        sent = {**attrs, **self.run_flow("Low", attrs, size=3 * 1024 ** 3).attributes}
+        high = {**sent, "invokehttp.status.code": "503", "registry.stage": "upload"}
+        result = self.run_flow("High", high)
+        self.assertEqual(result.relationship, "retryable")
+        self.assertEqual(retry_flowfile({**high, **result.attributes}, uuid="high-retry-card")[0], "retry")
 
 
 if __name__ == "__main__":

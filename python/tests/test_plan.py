@@ -204,6 +204,21 @@ class Resend(PlanBase):
                                         "registry.check": top[7:15]}))
         self.assertEqual([(j["kind"], j["layer"]) for j in jobs], [("config", 0), ("blob", 2), ("blob", 3)])
 
+    def test_a_layer_repeated_at_two_positions_can_be_resent_by_either_position(self):
+        top = self.layered("team/app", "1.0", ["a", "b", "a"])
+        for position in ("1", "3"):
+            jobs, _ = self.jobs(FlowFile(**{"registry.image.reference": "team/app:1.0", "registry.layers": position,
+                                            "registry.check": top[7:15]}))
+            self.assertEqual([j["digest"] for j in jobs if j["kind"] == "blob"], [digest(b"a")], position)
+        jobs, _ = self.jobs(FlowFile(**{"registry.image.reference": "team/app:1.0", "registry.layers": "1,3",
+                                        "registry.check": top[7:15]}))
+        self.assertEqual(len([j for j in jobs if j["kind"] == "blob"]), 1, "the repeated blob is sent once")
+
+    def test_a_repeated_layer_does_not_hide_the_layer_count(self):
+        self.layered("team/app", "1.0", ["a", "b", "a"])
+        jobs, _ = self.jobs(FlowFile(**{"registry.image.reference": "team/app:1.0"}))
+        self.assertEqual({j["layers"] for j in jobs if j["kind"] != "manifest"}, {3})
+
     def test_a_moved_tag_is_refused_and_nothing_is_sent(self):
         self.layered("team/app", "1.0", ["a", "b"])
         result = self.plan(FlowFile(**{"registry.image.reference": "team/app:1.0", "registry.layers": "2",
