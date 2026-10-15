@@ -33,9 +33,7 @@
         "Platform Selection": "#{platforms}",
         "Request Timeout": "120"
       },
-      "auto_terminated": [
-        "original"
-      ],
+      "auto_terminated": [],
       "bundle": {
         "group": "org.apache.nifi",
         "artifact": "python-extensions",
@@ -69,7 +67,6 @@
         "Registry Password": "#{src_password}"
       },
       "auto_terminated": [
-        "original",
         "stale",
         "waiting"
       ],
@@ -223,7 +220,7 @@
         "prepared"
       ],
       "back_pressure_data_size_threshold": "20 GB",
-      "back_pressure_object_threshold": 20
+      "back_pressure_object_threshold": 10000
     },
     {
       "type": "connection",
@@ -234,7 +231,7 @@
         "unverified"
       ],
       "back_pressure_data_size_threshold": "20 GB",
-      "back_pressure_object_threshold": 20
+      "back_pressure_object_threshold": 10000
     },
     {
       "type": "connection",
@@ -278,7 +275,7 @@
         "Response"
       ],
       "back_pressure_data_size_threshold": "20 GB",
-      "back_pressure_object_threshold": 20
+      "back_pressure_object_threshold": 10000
     },
     {
       "type": "connection",
@@ -291,7 +288,7 @@
         "Retry"
       ],
       "back_pressure_data_size_threshold": "20 GB",
-      "back_pressure_object_threshold": 20
+      "back_pressure_object_threshold": 10000
     },
     {
       "type": "connection",
@@ -302,7 +299,7 @@
         "success"
       ],
       "back_pressure_data_size_threshold": "20 GB",
-      "back_pressure_object_threshold": 20
+      "back_pressure_object_threshold": 10000
     },
     {
       "type": "connection",
@@ -328,7 +325,7 @@
     },
     {
       "type": "connection",
-      "name": "retries_exceeded, failure",
+      "name": "failure, retries_exceeded",
       "source": "RetryTransfer",
       "target": "Hold",
       "relationships": [

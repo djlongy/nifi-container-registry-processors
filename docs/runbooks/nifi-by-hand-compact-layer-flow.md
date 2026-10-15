@@ -219,14 +219,14 @@ A queue the operator inspects before anything is discarded ends at a **disabled*
 
 Drag from a source card's handle to its destination, choose the exact relationships in **Details**, and set the connection name to the value shown. A row with several relationships is **one connection** with all of them selected.
 
-Queue settings on **every** low connection. Everything else stays default (FlowFile Expiration `0 sec`, no prioritizer, no load balancing):
+Queue settings on every low connection that is not part of a loop. Everything else stays default (FlowFile Expiration `0 sec`, no prioritizer, no load balancing):
 
 | Setting | Value |
 |---|---|
 | Back Pressure Object Threshold | `20` |
 | Back Pressure Data Size Threshold | `20 GB` |
 
-Both connections of the retry loop, `retryable` from RouteTransfer to RetryTransfer and `retry` back, keep Back Pressure Object Threshold at NiFi's default `10000`. NiFi does not run a processor while any of its outgoing connections is full, so with a low limit on both sides of a loop each processor waits on the other and the loop stops for good once both fill.
+Every connection that sits on a directed loop keeps Back Pressure Object Threshold at NiFi's default `10000`: `prepared`, `unverified`, `retryable`, `Response`, `Failure, No Retry, Retry`, `success` from HashContent and `retry` (RouteTransfer sends to FetchBlob, HashContent and RetryTransfer, and each sends back to RouteTransfer). NiFi does not run a processor while any of its outgoing connections is full, so with a low limit on both sides of a loop each processor waits on the other and the loop stops for good once both fill. Set only Back Pressure Data Size Threshold `20 GB` on those connections.
 
 `20 GB` is a tested example, not a disk reservation. Choose a size larger than your largest blob, and size the content repository for concurrent claims, retries and archival retention. The live test used 40 GiB content volumes on each node. The port connection uses no named relationship.
 
@@ -259,9 +259,9 @@ In each processor's **Configure, Settings, Automatically Terminate Relationships
 | Processor | Auto-terminate |
 |---|---|
 | ReceiveWebhook | None |
-| PlanTransfer | `original` |
+| PlanTransfer | None |
 | SplitJobs | `original` |
-| RouteTransfer | `original`, `stale`, `waiting` |
+| RouteTransfer | `stale`, `waiting` |
 | FetchBlob | `Original` |
 | HashContent | None |
 | RetryTransfer | None |
@@ -572,14 +572,14 @@ A queue the operator inspects before anything is discarded ends at a **disabled*
 
 Drag from a source card's handle to its destination, choose the exact relationships in **Details**, and set the connection name to the value shown. A row with several relationships is **one connection** with all of them selected.
 
-Queue settings on **every** high connection except `stale`. Everything else stays default (FlowFile Expiration `0 sec`, no prioritizer, no load balancing):
+Queue settings on every high connection that is not part of a loop and is not `stale`. Everything else stays default (FlowFile Expiration `0 sec`, no prioritizer, no load balancing):
 
 | Setting | Value |
 |---|---|
 | Back Pressure Object Threshold | `20` |
 | Back Pressure Data Size Threshold | `20 GB` |
 
-Both connections of the retry loop, `retryable, waiting` from RouteTransfer to RetryTransfer and `retry` back, keep Back Pressure Object Threshold at NiFi's default `10000`. NiFi does not run a processor while any of its outgoing connections is full, so with a low limit on both sides of a loop each processor waits on the other and the loop stops for good once both fill.
+Every connection that sits on a directed loop keeps Back Pressure Object Threshold at NiFi's default `10000`: `prepared`, `retryable, waiting`, `Failure, No Retry, Original, Retry` and `retry` (RouteTransfer sends to UploadContent and RetryTransfer, and each sends back to RouteTransfer). NiFi does not run a processor while any of its outgoing connections is full, so with a low limit on both sides of a loop each processor waits on the other and the loop stops for good once both fill. Set only Back Pressure Data Size Threshold `20 GB` on those connections.
 
 On the `stale` connection leave Back Pressure Object Threshold at NiFi's default `10000` and set only Back Pressure Data Size Threshold `20 GB`: stale manifests are a few KB each and must never stop RouteTransfer. `20 GB` is a tested example, not a disk reservation. Choose a size larger than your largest blob and size the content repository for concurrent claims, retries and archival retention. The live test used 40 GiB content volumes on each node.
 
@@ -602,7 +602,7 @@ In each processor's **Configure, Settings, Automatically Terminate Relationships
 
 | Processor | Auto-terminate |
 |---|---|
-| RouteTransfer | `original`, `complete` |
+| RouteTransfer | `complete` |
 | UploadContent | `Response` |
 | RetryTransfer | None |
 | Hold | `success` (processor stays disabled) |

@@ -20,8 +20,7 @@
         "Stale After Hours": "24"
       },
       "auto_terminated": [
-        "complete",
-        "original"
+        "complete"
       ],
       "bundle": {
         "group": "org.apache.nifi",
@@ -126,7 +125,7 @@
         "prepared"
       ],
       "back_pressure_data_size_threshold": "20 GB",
-      "back_pressure_object_threshold": 20
+      "back_pressure_object_threshold": 10000
     },
     {
       "type": "connection",
@@ -154,7 +153,7 @@
     },
     {
       "type": "connection",
-      "name": "Original, No Retry, Retry, Failure",
+      "name": "Failure, No Retry, Original, Retry",
       "source": "UploadContent",
       "target": "RouteTransfer",
       "relationships": [
@@ -164,7 +163,7 @@
         "Failure"
       ],
       "back_pressure_data_size_threshold": "20 GB",
-      "back_pressure_object_threshold": 20
+      "back_pressure_object_threshold": 10000
     },
     {
       "type": "connection",
@@ -179,7 +178,7 @@
     },
     {
       "type": "connection",
-      "name": "retries_exceeded, failure",
+      "name": "failure, retries_exceeded",
       "source": "RetryTransfer",
       "target": "Hold",
       "relationships": [
