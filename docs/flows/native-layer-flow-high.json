@@ -28,8 +28,8 @@
         },
         "properties": {
           "Delete Attributes Expression": null,
-          "upload.ok": "${resp.Location:startsWith('/'):or(${resp.Location:startsWith(${dst.origin:append('/')})})}",
-          "upload.url": "${resp.Location:startsWith('/'):ifElse(${dst.origin}, ''):append(${resp.Location}):append(${resp.Location:contains('?'):ifElse('&', '?')}):append('digest='):append(${digest})}",
+          "upload.ok": "${resp.Location:replaceNull(${resp.location}):startsWith('/'):or(${resp.Location:replaceNull(${resp.location}):startsWith(${dst.origin:append('/')})})}",
+          "upload.url": "${resp.Location:replaceNull(${resp.location}):startsWith('/'):ifElse(${dst.origin}, ''):append(${resp.Location:replaceNull(${resp.location})}):append(${resp.Location:replaceNull(${resp.location}):contains('?'):ifElse('&', '?')}):append('digest='):append(${digest})}",
           "Store State": "Do not store state",
           "Cache Value Lookup Cache Size": "100",
           "Stateful Variables Initial Value": null
