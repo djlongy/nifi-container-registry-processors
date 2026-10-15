@@ -615,7 +615,22 @@ def read_export(path):
         return images
 
 
-def push_export(client, path, rewrite=None, strip=False, move_tags=False, log=None):
+def tag_is_current(client, repository, entry, move_tags, log):
+    """True when the tag already points at the entry's digest. A tag at another digest moves, as docker push
+    moves it, unless move_tags is false: then it raises before anything is pushed."""
+    current = client.manifest_digest(repository, entry["tag"])
+    if current == entry["digest"]:
+        return True
+    reference = f"{client.host}/{repository}:{entry['tag']}"
+    if current and not move_tags:
+        raise RegistryError(f"{reference} is {current}, the tar has {entry['digest']}; "
+                            "a tag does not move unless Move Existing Tags is true")
+    if current and log:  # the old image stays reachable by its digest
+        log(f"moving tag {reference} from {current} to {entry['digest']}")
+    return False
+
+
+def push_export(client, path, rewrite=None, strip=False, move_tags=True, log=None):
     """Push every image of an export tar. Every check runs before the first upload, so a refusal pushes
     nothing. Returns (pushed, present, lines)."""
     images = read_export(path)
@@ -629,12 +644,8 @@ def push_export(client, path, rewrite=None, strip=False, move_tags=False, log=No
                                 "two images cannot end at one tag, so nothing is pushed")
         if any(p[0] == repository and p[1]["tag"] == entry["tag"] for p in plan):
             continue  # the same image listed again
-        current = client.manifest_digest(repository, entry["tag"])
-        if current == entry["digest"]:
+        if tag_is_current(client, repository, entry, move_tags, log):
             present += 1
-        elif current and not move_tags:
-            raise RegistryError(f"{client.host}/{repository}:{entry['tag']} is {current}, the tar has {entry['digest']}; "
-                                "a tag does not move unless Move Existing Tags is true")
         else:
             plan.append((repository, entry, root, media_type, children, blobs))
     uploaded = {}  # digest -> first repository that has it, for mounts
