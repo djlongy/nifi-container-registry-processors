@@ -1,6 +1,6 @@
 # Build the image transfer by hand
 
-The image transfer moves a container image across a data diode one layer at a time. The low side reads the source registry and sends one FlowFile per blob and per manifest. The high side checks that every layer a manifest needs has arrived, uploads the blobs, then commits the manifest by digest and by tag. This guide is for **NiFi 2.12.0** with **PlanRegistryTransfer / RouteRegistryTransfer 1.5.1**.
+The image transfer moves a container image across a data diode one layer at a time. The low side reads the source registry and sends one FlowFile per blob and per manifest. The high side checks that every layer a manifest needs has arrived, uploads the blobs, then commits the manifest by digest and by tag. This guide is for **NiFi 2.12.0** with **PlanRegistryTransfer / RouteRegistryTransfer 1.5.2**.
 
 The two sides are built on different NiFi instances at work, so the guide is split the same way:
 
@@ -27,7 +27,7 @@ git checkout 559c53aa6e7bac04f53c83239dc3b184531caad7
 cp -R python/container-registry /opt/nifi/nifi-current/python_extensions/
 ```
 
-Run the copy as the NiFi service account, or set ownership so that account can read the files and write its Python working directory. Adjust the destination to `nifi.python.extensions.source.directory.default` in `nifi.properties`. Set `nifi.python.command` to your Python executable if Python is not enabled. Changing NiFi startup properties requires a restart; copying extension files is discovered by the loader. On a cluster install the same files on **every node**, then wait until the processor types at **1.5.1** appear in **Add Processor** and validate across the cluster. Do not change an existing Python processor's bundle version by API; create it at the installed version.
+Run the copy as the NiFi service account, or set ownership so that account can read the files and write its Python working directory. Adjust the destination to `nifi.python.extensions.source.directory.default` in `nifi.properties`. Set `nifi.python.command` to your Python executable if Python is not enabled. Changing NiFi startup properties requires a restart; copying extension files is discovered by the loader. On a cluster install the same files on **every node**, then wait until the processor types at **1.5.2** appear in **Add Processor** and validate across the cluster. Do not change an existing Python processor's bundle version by API; create it at the installed version.
 
 For containers, persist the modules through an image or init container or a mounted source directory. A manual copy is lost if your init container replaces that directory at restart. Do not install the older Java/NAR implementation for this flow.
 
@@ -84,9 +84,9 @@ Use **Add Processor**, search for the type, pick the exact version and keep NiFi
 | Type | Version | Initial state |
 |---|---|---|
 | ListenHTTP | 2.12.0 | Stopped while configuring |
-| PlanRegistryTransfer | 1.5.1 | Stopped while configuring |
+| PlanRegistryTransfer | 1.5.2 | Stopped while configuring |
 | SplitJson | 2.12.0 | Stopped while configuring |
-| RouteRegistryTransfer | 1.5.1 | Stopped while configuring |
+| RouteRegistryTransfer | 1.5.2 | Stopped while configuring |
 | InvokeHTTP | 2.12.0 | Stopped while configuring |
 | CryptographicHashContent | 2.12.0 | Stopped while configuring |
 | RetryFlowFile | 2.12.0 | Stopped while configuring |
@@ -507,7 +507,7 @@ Use **Add Processor**, search for the type, pick the exact version and keep NiFi
 
 | Type | Version | Initial state |
 |---|---|---|
-| RouteRegistryTransfer | 1.5.1 | Stopped while configuring |
+| RouteRegistryTransfer | 1.5.2 | Stopped while configuring |
 | InvokeHTTP | 2.12.0 | Stopped while configuring |
 | RetryFlowFile | 2.12.0 | Stopped while configuring |
 | LogMessage (failure) | 2.12.0 | **Disabled** |
