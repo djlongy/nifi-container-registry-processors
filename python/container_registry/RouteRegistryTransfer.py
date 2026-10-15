@@ -64,12 +64,20 @@ class RouteRegistryTransfer(FlowFileTransform):
 
     def getRelationships(self):
         return [Relationship(name, description) for name, description in [
-            ("http", "Native InvokeHTTP; Original/Response returns here"),
-            ("hash", "Native CryptographicHashContent; success returns here"),
-            ("ready", "Verified content ready for the diode, or committed at the destination"),
-            ("retry", "Penalised RetryFlowFile, then back here"),
-            ("stale", "High side: a manifest whose layers or platform manifests did not all arrive within Stale After Hours"),
-            ("failure", "Preserved content for a disabled hold processor")]]
+            ("prepared", "A registry request is prepared in registry.http.*. Connect to InvokeHTTP (low: FetchBlob, "
+                         "high: UploadContent) and connect its Original, Response, Retry, No Retry and Failure back here"),
+            ("unverified", "Low side: downloaded content whose digest is not checked yet. Connect to "
+                           "CryptographicHashContent and its success back here. High side: never used, connect to Hold"),
+            ("complete", "This side is finished. Low: content verified, connect to the diode. "
+                         "High: stored in the registry, auto-terminate"),
+            ("retryable", "A transient error (network, authentication, HTTP 408, 429 or 5xx), recoverable. "
+                          "Connect to RetryFlowFile and its retry back here; registry.error says why"),
+            ("waiting", "High side: a manifest whose layers or platform manifests have not all arrived. Connect to "
+                        "RetryFlowFile with retry back here; it is checked again at a doubling interval up to 30 min"),
+            ("stale", "High side: a manifest still waiting after Stale After Hours. Connect to a disabled processor "
+                      "to keep it for a resend; low side never uses it, auto-terminate"),
+            ("failure", "A permanent condition: refused by the registry, wrong digest or size, or a malformed job. "
+                       "Content is kept; connect to a disabled hold processor")]]
 
     @staticmethod
     def _result(relationship, attributes=None, contents=None):
@@ -81,7 +89,7 @@ class RouteRegistryTransfer(FlowFileTransform):
 
     @classmethod
     def _retry(cls, message):
-        return cls._result("retry", {STAGE: "", AUTH_HEADER: "", ERROR: message, RETRY_MAX: "3"})
+        return cls._result("retryable", {STAGE: "", AUTH_HEADER: "", ERROR: message, RETRY_MAX: "3"})
 
     @staticmethod
     def _http(method, url, header, media_type, stage):
@@ -134,25 +142,25 @@ class RouteRegistryTransfer(FlowFileTransform):
             return self._finish("failure", "destination manifest digest differs from the planned job")
         reference = facts["reference"]
         if stage != "manifest-digest" or reference == facts["digest"]:
-            return self._finish("ready")
+            return self._finish("complete")
         if not TAG.fullmatch(reference or ""):
             raise RegistryError("invalid manifest tag")
-        return self._result("http", self._http("PUT", flowfile.getAttribute("registry.manifest.tag.url"),
+        return self._result("prepared", self._http("PUT", flowfile.getAttribute("registry.manifest.tag.url"),
             flowfile.getAttribute(AUTH_HEADER), facts[MEDIA_TYPE], "manifest-tag"))
 
     def _callback(self, side, stage, flowfile, facts):
         if stage == "verify":
             if flowfile.getSize() != int(facts["size"]) or flowfile.getAttribute("content_SHA-256") != facts["digest"][7:]:
                 return self._finish("failure", "content digest or size differs from the planned job")
-            return self._finish("ready")
+            return self._finish("complete")
         status = int(flowfile.getAttribute(HTTP_STATUS) or "0")
         if side == "Low" and stage == "fetch" and status == 200:
-            return self._result("hash", {STAGE: "verify", AUTH_HEADER: ""})
+            return self._result("unverified", {STAGE: "verify", AUTH_HEADER: ""})
         if side != "High" or status != 201:
             return self._http_failure(stage, status)
         if facts["kind"] in ("manifest", "index"):
             return self._manifest_committed(flowfile, facts, stage)
-        return self._finish("ready")
+        return self._finish("complete")
 
     @staticmethod
     def _dependencies(client, repository, facts):
@@ -179,7 +187,7 @@ class RouteRegistryTransfer(FlowFileTransform):
         """A waiting manifest whose next dependency check is not due: back to RetryFlowFile without a registry call."""
         due = float(flowfile.getAttribute(WAIT_NEXT) or 0)
         if time.time() < due:
-            return FlowFileTransformResult("retry", attributes={RETRY_MAX: WAIT_RETRIES})
+            return FlowFileTransformResult("waiting", attributes={RETRY_MAX: WAIT_RETRIES})
         return None
 
     def _incomplete(self, flowfile, facts, dependencies, missing, stale_hours):
@@ -200,7 +208,7 @@ class RouteRegistryTransfer(FlowFileTransform):
             return self._result("stale", {STAGE: "", AUTH_HEADER: "", ERROR: message,
                                           WAIT_SINCE: "", WAIT_CHECKS: "", WAIT_NEXT: ""})
         delay = min(FIRST_CHECK * 2 ** (checks - 1), LAST_CHECK)
-        return self._result("retry", {STAGE: "", AUTH_HEADER: "", ERROR: message,
+        return self._result("waiting", {STAGE: "", AUTH_HEADER: "", ERROR: message,
                                       RETRY_MAX: WAIT_RETRIES, WAIT_SINCE: str(since),
                                       WAIT_CHECKS: str(checks), WAIT_NEXT: str(now + delay)})
 
@@ -209,14 +217,14 @@ class RouteRegistryTransfer(FlowFileTransform):
         status = response.status
         response.close()
         if status == 200:
-            return self._finish("ready")
+            return self._finish("complete")
         if status != 404:
             raise RegistryError(f"destination blob HEAD failed (HTTP {status})")
         upload = client.start_upload(repository)
         if not client._guard(upload, "upload Location"):
             raise RegistryError("upload Location names a foreign host")
         url = upload + ("&" if "?" in upload else "?") + "digest=" + urllib.parse.quote(digest)
-        return self._result("http", self._http("PUT", url, self._header(client, repository, WRITE_SCOPE),
+        return self._result("prepared", self._http("PUT", url, self._header(client, repository, WRITE_SCOPE),
                                                "application/octet-stream", "upload"))
 
     def _prepare_manifest(self, client, repository, facts, flowfile, stale_hours):
@@ -229,7 +237,7 @@ class RouteRegistryTransfer(FlowFileTransform):
         attrs = self._http("PUT", f"{client.base}/v2/{repository}/manifests/{facts['digest']}",
                            self._header(client, repository, WRITE_SCOPE), media_type, "manifest-digest")
         attrs["registry.manifest.tag.url"] = f"{client.base}/v2/{repository}/manifests/{facts['reference']}"
-        return self._result("http", attrs)
+        return self._result("prepared", attrs)
 
     def _request(self, context, side, flowfile, facts, attributes):
         def prop(descriptor):
@@ -243,7 +251,7 @@ class RouteRegistryTransfer(FlowFileTransform):
             # shortcut: payload redirects are refused; add guarded storage redirects when a registry requires them.
             http = self._http("GET", f"{client.base}/v2/{repository}/blobs/{digest}",
                               self._header(client, repository, "pull"), "application/octet-stream", "fetch")
-            return self._result("http", {**attributes, **http})
+            return self._result("prepared", {**attributes, **http})
         if facts["kind"] in ("manifest", "index"):
             pending = self._wait_pending(flowfile)
             if pending:
@@ -269,7 +277,7 @@ class RouteRegistryTransfer(FlowFileTransform):
                 attributes, raw = self._job(flowfile)
                 self._facts(flowfile, attributes)
                 if raw is not None:
-                    return self._result("hash", {**attributes, STAGE: "verify"}, raw)
+                    return self._result("unverified", {**attributes, STAGE: "verify"}, raw)
             facts = self._facts(flowfile, attributes)
             if stage:
                 return self._callback(side, stage, flowfile, facts)

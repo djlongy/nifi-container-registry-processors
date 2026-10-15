@@ -184,7 +184,19 @@ Auto-terminate `original`; connect `split` and `failure`. This splits the small 
 | Request Timeout | `60` seconds | `60` seconds |
 | Stale After Hours | `24` (unused) | `24` |
 
-Low auto-termination: `original`, `stale` (low never waits on dependencies). High auto-termination: `original`, `ready`. Connect every other relationship as listed below; high `hash` is intentionally sent to Hold because the high controller never asks to hash content.
+RouteTransfer's relationships each name the condition of the FlowFile at the moment it leaves, not the step that follows:
+
+| Relationship | Condition | Low side | High side |
+|---|---|---|---|
+| `prepared` | A registry request is prepared in `registry.http.*` | FetchBlob | UploadContent |
+| `unverified` | Downloaded bytes whose digest is not checked yet | HashContent | Hold (never used) |
+| `complete` | This side's work is finished | ToDiode (verified, send it) | Auto-terminate (stored in the registry) |
+| `retryable` | A transient error, recoverable | RetryTransfer | RetryTransfer |
+| `waiting` | A manifest whose layers have not all arrived | Auto-terminate (never used) | RetryTransfer |
+| `stale` | Still waiting after Stale After Hours | Auto-terminate (never used) | StaleImages |
+| `failure` | A permanent condition, content kept (NiFi's own name, also used when the processor raises) | Hold | Hold |
+
+Low auto-termination: `original`, `stale`, `waiting` (low never waits on dependencies). High auto-termination: `original`, `complete`. Connect every other relationship as listed below; high `unverified` is intentionally sent to Hold because the high controller never asks to hash content.
 
 RouteTransfer handles scoped registry authentication, metadata HEAD requests and empty upload-start POSTs. Native InvokeHTTP carries the blob bytes. The low FetchBlob callback returns to RouteTransfer **before HashContent** so the source Authorization value is cleared before the diode. This clears the current attribute value; it cannot erase earlier provenance records. The high controller checks dependencies before manifest PUT, commits by digest first and then by tag.
 
@@ -276,7 +288,7 @@ Apply these properties to **all** low/high connections and the optional test bri
 
 | Connection setting | Value |
 |---|---|
-| Back pressure object threshold | `20` (`10000` on `RouteTransferToStaleImages`: stale manifests are a few KB each and must never stop RouteTransfer) |
+| Back pressure object threshold | `20` (`10000` on the `stale` queue: stale manifests are a few KB each and must never stop RouteTransfer) |
 | Back pressure data size threshold | `20 GB` |
 | FlowFile expiration | `0 sec` (never expire retained failures) |
 | Prioritizers | None |
@@ -289,35 +301,35 @@ Apply these properties to **all** low/high connections and the optional test bri
 
 | # | Source | Selected relationships | Destination | Connection name |
 |---|---|---|---|---|
-| L1 | ReceiveWebhook | `success` | PlanTransfer | `ReceiveWebhookToPlanTransfer` |
-| L2 | PlanTransfer | `success` | SplitJobs | `PlanTransferToSplitJobs` |
-| L3 | PlanTransfer | `failure` | Hold | `PlanTransferToHold` |
-| L4 | SplitJobs | `split` | RouteTransfer | `SplitJobsToRouteTransfer` |
-| L5 | SplitJobs | `failure` | Hold | `SplitJobsToHold` |
-| L6 | RouteTransfer | `http` | FetchBlob | `RouteTransferToFetchBlob` |
-| L7 | RouteTransfer | `hash` | HashContent | `RouteTransferToHashContent` |
-| L8 | RouteTransfer | `ready` | ToDiode | `RouteTransferToToDiode` |
-| L9 | RouteTransfer | `retry` | RetryTransfer | `RouteTransferToRetryTransfer` |
-| L10 | RouteTransfer | `failure` | Hold | `RouteTransferToHold` |
-| L11 | FetchBlob | `Response` | RouteTransfer | `FetchBlobToRouteTransfer` |
-| L12 | FetchBlob | `Failure`, `No Retry`, `Retry` | RouteTransfer | `FetchBlobToRouteTransfer` |
-| L13 | HashContent | `success` | RouteTransfer | `HashContentToRouteTransfer` |
-| L14 | HashContent | `failure` | Hold | `HashContentToHold` |
-| L15 | RetryTransfer | `retry` | RouteTransfer | `RetryTransferToRouteTransfer` |
-| L16 | RetryTransfer | `retries_exceeded`, `failure` | Hold | `RetryTransferToHold` |
+| L1 | ReceiveWebhook | `success` | PlanTransfer | `success` |
+| L2 | PlanTransfer | `success` | SplitJobs | `success` |
+| L3 | PlanTransfer | `failure` | Hold | `failure` |
+| L4 | SplitJobs | `split` | RouteTransfer | `split` |
+| L5 | SplitJobs | `failure` | Hold | `failure` |
+| L6 | RouteTransfer | `prepared` | FetchBlob | `prepared` |
+| L7 | RouteTransfer | `unverified` | HashContent | `unverified` |
+| L8 | RouteTransfer | `complete` | ToDiode | `complete` |
+| L9 | RouteTransfer | `retryable` | RetryTransfer | `retryable` |
+| L10 | RouteTransfer | `failure` | Hold | `failure` |
+| L11 | FetchBlob | `Response` | RouteTransfer | `Response` |
+| L12 | FetchBlob | `Failure`, `No Retry`, `Retry` | RouteTransfer | `Failure, No Retry, Retry` |
+| L13 | HashContent | `success` | RouteTransfer | `success` |
+| L14 | HashContent | `failure` | Hold | `failure` |
+| L15 | RetryTransfer | `retry` | RouteTransfer | `retry` |
+| L16 | RetryTransfer | `retries_exceeded`, `failure` | Hold | `retries_exceeded, failure` |
 
 ### High-side wiring — 8 connections
 
 | # | Source | Selected relationships | Destination | Connection name |
 |---|---|---|---|---|
-| H1 | FromDiode | None (port) | RouteTransfer | `FromDiodeToRouteTransfer` |
-| H2 | RouteTransfer | `http` | UploadContent | `RouteTransferToUploadContent` |
-| H3 | RouteTransfer | `retry` | RetryTransfer | `RouteTransferToRetryTransfer` |
-| H4 | RouteTransfer | `failure`, `hash` | Hold | `RouteTransferToHold` |
-| H5 | UploadContent | `Original`, `No Retry`, `Retry`, `Failure` | RouteTransfer | `UploadContentToRouteTransfer` |
-| H6 | RetryTransfer | `retry` | RouteTransfer | `RetryTransferToRouteTransfer` |
-| H7 | RetryTransfer | `retries_exceeded`, `failure` | Hold | `RetryTransferToHold` |
-| H8 | RouteTransfer | `stale` | StaleImages | `RouteTransferToStaleImages` |
+| H1 | FromDiode | None (port) | RouteTransfer | `FromDiode` |
+| H2 | RouteTransfer | `prepared` | UploadContent | `prepared` |
+| H3 | RouteTransfer | `retryable`, `waiting` | RetryTransfer | `retryable, waiting` |
+| H4 | RouteTransfer | `failure`, `unverified` | Hold | `failure, unverified` |
+| H5 | UploadContent | `Original`, `No Retry`, `Retry`, `Failure` | RouteTransfer | `Original, No Retry, Retry, Failure` |
+| H6 | RetryTransfer | `retry` | RouteTransfer | `retry` |
+| H7 | RetryTransfer | `retries_exceeded`, `failure` | Hold | `retries_exceeded, failure` |
+| H8 | RouteTransfer | `stale` | StaleImages | `stale` |
 
 ### Complete auto-termination checklist
 
@@ -326,12 +338,12 @@ Apply these properties to **all** low/high connections and the optional test bri
 | Low | ReceiveWebhook | None |
 | Low | PlanTransfer | `original` |
 | Low | SplitJobs | `original` |
-| Low | RouteTransfer | `original` |
+| Low | RouteTransfer | `original`, `stale`, `waiting` |
 | Low | FetchBlob | `Original` |
 | Low | HashContent | None |
 | Low | RetryTransfer | None |
 | Low | Hold | `success` (processor remains disabled) |
-| High | RouteTransfer | `original`, `ready` |
+| High | RouteTransfer | `original`, `complete` |
 | High | UploadContent | `Response` |
 | High | RetryTransfer | None |
 | High | Hold | `success` (processor remains disabled) |
@@ -443,7 +455,7 @@ Keep failed bytes in place while you read the bulletin and `registry.error`. Do 
 | 401/403 | Check robot repository permissions/token; network retries do not repair missing permissions |
 | Checksum/registry/allowlist failure | Fix the request or context and send a corrected request; inspect the retained original |
 | Hash or size mismatch | Hold the bytes; resend from the trusted source rather than accepting the mismatch |
-| High side stops moving; `RouteTransferToHold` or `RetryTransferToHold` shows 20 queued | Back pressure. Each Hold queue stops its source at 20 FlowFiles, and a stopped RouteTransfer stops the whole high side, including new arrivals from the diode. Find the reason in the held FlowFiles' `registry.error`, fix it, then empty or replay the Hold queues. Alert on any FlowFile in a Hold queue so this is seen at 1, not at 20. |
+| High side stops moving; a `failure` queue into Hold shows 20 queued | Back pressure. Each Hold queue stops its source at 20 FlowFiles, and a stopped RouteTransfer stops the whole high side, including new arrivals from the diode. Find the reason in the held FlowFiles' `registry.error`, fix it, then empty or replay the Hold queues. Alert on any FlowFile in a Hold queue so this is seen at 1, not at 20. |
 | Image never appears; one warning `… incomplete: missing layers N of M … moved to stale` | Layers were lost across the diode. The manifest is in `StaleImages`; resend the image or the named layers from the low side, then move the stale manifest back to RouteTransfer (or let the resent manifest commit). A replayed stale manifest starts a fresh wait. |
 | Foreign upload URL | Refused by this compact controller; use a compatible registry or a separately reviewed transfer option |
 | Registry shows upload POSTs but no layer PUTs | The native InvokeHTTP cannot reach the registry: no `RegistryTrust` on it (`PKIX path building failed`), or a Basic registry without Request Username/Password (HTTP 401), or a Basic registry whose InvokeHTTP still has the `Authorization` dynamic property (HTTP 400 from the proxy, logged by ingress-nginx as request `"-"`). The controller logs each retry reason as a warning bulletin. |
