@@ -57,6 +57,27 @@ class Collisions(unittest.TestCase):
         self.assertEqual(pushed + present, 1)
 
 
+class TagMoves(unittest.TestCase):
+    def test_a_tag_at_another_digest_moves_by_default_as_docker_push_does(self):
+        source = FakeRegistry()
+        new = source.add_image("team/app", "v1", "new")
+        path = export(source, [("team/app", "v1", new)])
+        for move_tags in (False, True):
+            with self.subTest(move_tags=move_tags):
+                target = FakeRegistry()
+                old = target.add_image("team/app", "v1", "old")
+                lines = []
+                if move_tags:
+                    pushed, _, _ = c.push_export(target, path, log=lines.append)  # the default
+                    self.assertEqual(pushed, 1)
+                    self.assertEqual(target.manifest_digest("team/app", "v1"), new)
+                    self.assertTrue(any(f"from {old} to {new}" in line for line in lines), lines)
+                else:
+                    with self.assertRaisesRegex(c.RegistryError, "does not move unless Move Existing Tags is true"):
+                        c.push_export(target, path, move_tags=False)
+                    self.assertEqual(target.manifest_digest("team/app", "v1"), old)
+
+
 class OptionalUrls(unittest.TestCase):
     URLS = ["https://example.invalid/optional-mirror"]
 

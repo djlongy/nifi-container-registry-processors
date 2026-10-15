@@ -114,7 +114,7 @@ Generated from the descriptors (`python3 python/tests/test_readme_tables.py --wr
 | Delete Input Tar | Yes | `false` | Delete the tar once every image is pushed. Default false: it stays. A failed push keeps it. The tar is renamed to <path>.pushing-<id> while pushing, so a killed push leaves that name; a replay adopts it. Ignored when Input Tar Path is empty. |
 | Rewrite Target Base Path | No | none | Replace the first path segment of every repository pushed: team/app becomes new/app with new. Empty (default): the name recorded in the tar. Not with Strip Target Base Path. FlowFile attributes allowed. |
 | Strip Target Base Path | Yes | `false` | Remove the first path segment of every target repository: team/app becomes app. Default false: names unchanged. Not with Rewrite Target Base Path. |
-| Move Existing Tags | Yes | `false` | Let a push move a tag that already points at another digest in the target registry. Default false: such a tar fails with registry.error and nothing is pushed. A tag already at the right digest is skipped either way. |
+| Move Existing Tags | Yes | `true` | Move a tag that already points at another digest in the target registry, as docker push does. Default true. Set false to protect tags: such a tar then fails with registry.error and nothing is pushed. A tag already at the right digest is skipped either way. |
 | Request Timeout | Yes | `600` | Seconds a registry read or write may stall before it fails. Default 600 (10 minutes). Blobs stream, so this is a stall limit, not a limit on the total time. |
 <!-- /properties -->
 
