@@ -18,7 +18,7 @@ These are actual screenshots of the running, empty-queue PLANA canvases on 2026-
 
 ## 1. Install the Python processors on every node
 
-You need Python 3.10 or later, NiFi's standard processor NARs, access to each registry's HTTPS endpoint, and enough content/provenance disk for active transfers and retention. Neither Docker nor skopeo is required on the NiFi nodes. Copy the **whole** `python/container_registry` directory, including its helper modules; copying just the two processor files is insufficient.
+You need Python 3.10 or later, NiFi's standard processor NARs, access to each registry's HTTPS endpoint, and enough content/provenance disk for active transfers and retention. Neither Docker nor skopeo is required on the NiFi nodes. Copy the **whole** `python/container-registry` directory, including its helper modules; copying just the two processor files is insufficient.
 
 For the validated source revision:
 
@@ -26,7 +26,7 @@ For the validated source revision:
 git clone https://github.com/djlongy/nifi-container-registry-processors.git
 cd nifi-container-registry-processors
 git checkout 559c53aa6e7bac04f53c83239dc3b184531caad7
-cp -R python/container_registry /opt/nifi/nifi-current/python_extensions/
+cp -R python/container-registry /opt/nifi/nifi-current/python_extensions/
 ```
 
 Run the copy as the NiFi service account, or set ownership so that account can read the files and write its Python working/virtual-environment directory. Adjust the destination to `nifi.python.extensions.source.directory.default` in `nifi.properties`. Set `nifi.python.command` to your Python executable if Python is not enabled. Changing NiFi startup properties requires a restart; copying extension files is discovered by the loader. On a cluster install the same files on **every node**, then wait until both processor types at **1.5.1** appear in **Add Processor** and validate across the cluster. Do not change an existing Python processor's bundle version by API; create it at the installed version.

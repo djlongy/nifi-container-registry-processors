@@ -6,7 +6,7 @@ import subprocess
 import sys
 import unittest
 
-HERE = os.path.join(os.path.dirname(__file__), "..", "container_registry")
+HERE = os.path.join(os.path.dirname(__file__), "..", "container-registry")
 sys.path.insert(0, HERE)
 from container_registry_client import RegistryError, _Hashing, rebase  # noqa: E402
 

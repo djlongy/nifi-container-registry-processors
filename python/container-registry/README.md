@@ -1,4 +1,4 @@
-# container_registry
+# container-registry
 
 PushContainerImages, PullContainerImages and ExportContainerImages as NiFi Python processors: the maintained implementation of the mirror.py export tar for NiFi, plain source with no build.
 
@@ -17,8 +17,10 @@ PushContainerImages, PullContainerImages and ExportContainerImages as NiFi Pytho
 Copy this directory into the Python extensions directory (`nifi.python.extensions.source.directory.default`, `./python_extensions`) of every node, or onto the share mounted there:
 
 ```sh
-cp -r python/container_registry /opt/nifi/nifi-current/python_extensions/
+cp -r python/container-registry /opt/nifi/nifi-current/python_extensions/
 ```
+
+Upgrading from a release that installed `python_extensions/container_registry` (underscore): delete that directory. NiFi loads every `.py` file it finds, so the old copy would register each processor a second time.
 
 On Kubernetes, build `python/Containerfile` and copy from it in an init container, so every pod has the processors before NiFi starts:
 
@@ -26,7 +28,7 @@ On Kubernetes, build `python/Containerfile` and copy from it in an init containe
 initContainers:
   - name: python-extensions
     image: <registry>/<ns>/nifi-container-registry-python@sha256:<digest>
-    command: ["sh", "-c", "rm -rf /target/container_registry && cp -r /extensions/container_registry /target/"]
+    command: ["sh", "-c", "rm -rf /target/container_registry /target/container-registry && cp -r /extensions/container-registry /target/"]
     volumeMounts:
       - name: python-extensions
         mountPath: /target

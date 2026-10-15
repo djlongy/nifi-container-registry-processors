@@ -3,7 +3,7 @@ import hashlib
 import io
 import json
 
-import nifi_stub  # noqa: F401  (puts container_registry on sys.path)
+import nifi_stub  # noqa: F401  (puts container-registry on sys.path)
 from container_registry_client import RegistryError
 
 MANIFEST = "application/vnd.oci.image.manifest.v1+json"
