@@ -69,7 +69,8 @@
         "Registry Password": "#{src_password}"
       },
       "auto_terminated": [
-        "original"
+        "original",
+        "stale"
       ],
       "bundle": {
         "group": "org.apache.nifi",
