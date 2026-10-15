@@ -21,7 +21,7 @@ HIGH from low side -> target settings -> target repository -> route by kind
 
 ## 0. What you need
 
-- NiFi 2.x with `python/container_registry/` in the Python extensions directory of every node (restart once so NiFi finds `PlanRegistryTransfer`). Without the planner the low side still works from a job list: replace `request` and `plan` with a `GenerateFlowFile` whose Custom Text is a job list.
+- NiFi 2.x with `python/container-registry/` in the Python extensions directory of every node (restart once so NiFi finds `PlanRegistryTransfer`). Without the planner the low side still works from a job list: replace `request` and `plan` with a `GenerateFlowFile` whose Custom Text is a job list.
 - On every high-side node, `python/scripts/manifest_gate.py` and `push_from_stdin.py` side by side, for example in `/opt/nifi/scripts/`. Python 3 is in the NiFi image.
 - Any registry that follows the OCI distribution spec. The default upload is the portable two-request form (section 3.5), proven on `registry:2` (distribution 2.8.3), zot and Quay. zot needs `"compat": ["docker2s2"]` under `http` to accept Docker schema 2 manifests. A single-request upload exists as an optional shortcut (section 8).
 - Manifest requests must send the full Accept list: OCI index, OCI manifest, Docker manifest list and Docker manifest v2. With only the Docker v2 type, `registry:2` converts an OCI manifest and returns different bytes, so the digest changes. The planner and `manifest_gate.py` already send all four; do the same in any `InvokeHTTP` you add that reads a manifest.

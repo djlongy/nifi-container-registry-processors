@@ -10,7 +10,7 @@ include:
       stage: scan
       policy-mode: blocking
       sarif-report-jobs: [{ job: 'python-test', artifacts: true }]
-      sources: 'python/container_registry'
+      sources: 'python/container-registry'
       exclusions: '.ci-tpl/**,.ci-artifacts/**'
       extra-properties: 'sonar.tests=python/tests;sonar.python.version=3.12;sonar.python.coverage.reportPaths=coverage.xml'
 
@@ -23,7 +23,7 @@ python-test:
   image: $PYTHON_TEST_IMAGE
   script:
     - pip install --no-cache-dir coverage
-    - coverage run --source=python/container_registry -m unittest discover -s python/tests
+    - coverage run --source=python/container-registry -m unittest discover -s python/tests
     - coverage xml -o coverage.xml
     - coverage report
   coverage: '/^TOTAL.*\s(\d+(?:\.\d+)?)%$/'

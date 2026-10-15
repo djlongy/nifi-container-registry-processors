@@ -2,7 +2,7 @@
 
 NiFi Python processors that export container images from a registry into a tar and push such a tar into a registry, digests unchanged, with no skopeo or docker on the NiFi host. The tar is the export format of mirror.py (djlongy/gitlab-registry-mirror), so either side can be NiFi or mirror.py.
 
-The Python processors in `python/container_registry/` are the maintained implementation. They need no build and no dependencies; see that directory's README for installing and operating them.
+The Python processors in `python/container-registry/` are the maintained implementation. They need no build and no dependencies; see that directory's README for installing and operating them.
 
 The earlier NAR releases (v1.x on GitHub) are no longer maintained. The Python processors replace them; see the [migration table](#upgrading-from-14x-or-earlier-renamed-and-removed-properties) for renamed and removed properties.
 
@@ -33,7 +33,7 @@ A change to this layout is a new major version.
 
 ## Python processors 1.5.0
 
-`python/container_registry/` holds PullContainerImages and PushContainerImages in Python, plus ExportContainerImages (details in its README). They need no build: copy the directory into the Python extensions directory of every node. To go from nothing to one pushed image, follow [QUICKSTART.md](QUICKSTART.md); for a click-by-click build of the webhook flow in the NiFi UI, see [docs/runbooks/nifi-by-hand.md](docs/runbooks/nifi-by-hand.md).
+`python/container-registry/` holds PullContainerImages and PushContainerImages in Python, plus ExportContainerImages (details in its README). They need no build: copy the directory into the Python extensions directory of every node. To go from nothing to one pushed image, follow [QUICKSTART.md](QUICKSTART.md); for a click-by-click build of the webhook flow in the NiFi UI, see [docs/runbooks/nifi-by-hand.md](docs/runbooks/nifi-by-hand.md).
 
 | Processor | Side | What it does |
 |---|---|---|
@@ -241,7 +241,7 @@ All other names are unchanged.
 
 The processors are plain Python so that a person, or a local model, can read, change and test them without compiling anything. Follow these steps in order.
 
-### Layout (`python/container_registry/`)
+### Layout (`python/container-registry/`)
 
 | File | Holds |
 |---|---|
@@ -272,10 +272,10 @@ python3 python/tests/test_readme_tables.py --write
 
 ### Load a change into a running NiFi 2.x
 
-1. Copy the changed files over the ones in the Python extensions directory of the node (`cp -r python/container_registry <python extensions directory>/`).
+1. Copy the changed files over the ones in the Python extensions directory of the node (`cp -r python/container-registry <python extensions directory>/`).
 2. Stop the processor and start it again. Per NiFi's Python Developer Guide ("Processor Reloading"), a changed source takes effect when the processor is next started, with no NiFi restart. Stopped processors may also reload on validation.
 3. If the processor never loaded successfully before, NiFi may not watch it for changes: restart NiFi.
-4. When behaviour changes, raise `version` in the processor's `ProcessorDetails` (and the same number in `python/container_registry/README.md`), so a flow can tell the versions apart. NiFi can hold two versions of one processor side by side; choose one with **Change Version** on the processor.
+4. When behaviour changes, raise `version` in the processor's `ProcessorDetails` (and the same number in `python/container-registry/README.md`), so a flow can tell the versions apart. NiFi can hold two versions of one processor side by side; choose one with **Change Version** on the processor.
 
 ## Behaviour
 

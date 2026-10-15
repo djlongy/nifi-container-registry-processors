@@ -10,7 +10,7 @@ import re
 import sys
 import types
 
-HERE = os.path.join(os.path.dirname(__file__), "..", "container_registry")
+HERE = os.path.join(os.path.dirname(__file__), "..", "container-registry")
 TRIVIAL = re.compile(r"\$\{([^${}\[\],:;/*\' \t\r\n\\d][^${}\[\],:;/*\' \t\r\n]*)}")
 WRITE_UTF_LIMIT = 65535
 
