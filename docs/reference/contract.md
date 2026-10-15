@@ -30,11 +30,11 @@ If a RouteOnAttribute rule tests an attribute that the GenerateFlowFile does not
 
 | Feeds | Content (Custom Text) | Dynamic properties to add |
 |---|---|---|
-| PlanRegistryTransfer in reference mode (for example the `ResendImage` card) | Ignored. `{}` | `registry.image.reference` only. Add `transfer.id`, `registry.layers`, `registry.check` and `registry.platform` when you need them, see [PlanRegistryTransfer](#planregistrytransfer) |
+| PlanRegistryTransfer in reference mode (for example the `ResendImage` card) | Ignored. `{}` | `registry.image.reference`, which is the only attribute PlanRegistryTransfer needs, **plus the full `X-*` set** when anything downstream routes on it (see below). Add `transfer.id`, `registry.layers`, `registry.check` and `registry.platform` when you need them, see [PlanRegistryTransfer](#planregistrytransfer) |
 | PlanRegistryTransfer in webhook mode, or ExportContainerImages, directly | The request body, byte for byte | `X-Sha256` |
 | The same, behind a RouteOnAttribute on `X-Artifact-Type` (the flow in [QUICKSTART.md](../../QUICKSTART.md)) | The request body, byte for byte | `X-Sha256` and `X-Artifact-Type` |
 
-PlanRegistryTransfer in reference mode reads none of the webhook headers. The compact PLANA flow has no RouteOnAttribute between `ResendImage` and `PlanTransfer`. If you add one, add the attribute it tests.
+PlanRegistryTransfer in reference mode reads none of the webhook headers itself. **A stand-in card must still carry the full `X-*` set of the real webhook whenever anything downstream routes on them**: a RouteOnAttribute, or a person reading the FlowFile attributes. The `ResendImage` card in the image transfer flow carries all of them: `X-Artifact-Type` = `container-images-request`, `X-Artifact-Format` = `json`, `X-Sha256` (the sha256 of its Custom Text `{}`, `44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a`), `X-Registry` = `registry.example.com`, `X-Image-Count` = `1`, `X-CI-Project` = `manual-resend`, `X-CI-Pipeline-Url` = `none` and `X-CI-Commit-Sha` = `none`, next to `registry.image.reference`. See [the table below](#the-complete-webhook-attribute-set) for what each one is.
 
 ### The complete webhook attribute set
 
@@ -44,11 +44,11 @@ These are all the attributes a real webhook FlowFile carries, with the exact nam
 |---|---|---|---|
 | `X-Sha256` | ExportContainerImages and PlanRegistryTransfer in webhook mode | `3f2a...` (64 lowercase hex characters, see below) | Both processors compare it with the sha256 of the FlowFile content |
 | `X-Artifact-Type` | A RouteOnAttribute that routes on it | `container-images-request` | The RouteOnAttribute rule `${X-Artifact-Type:equals('container-images-request')}`. No Python processor reads it |
-| `X-Artifact-Format` | Nothing | `json` | Nothing. Routing and display only |
+| `X-Artifact-Format` | Nothing, unless a route tests it | `json` | Nothing. Routing and display only |
 | `Content-Type` | Nothing | `application/json` | Nothing. Routing and display only. A GenerateFlowFile **Mime Type** sets `mime.type`, which is a different attribute |
-| `X-Registry` | Nothing | `registry.example.com` | Nothing. The registry the processor trusts is the body's `registry` field and **Source Registry URL**, never this header |
-| `X-Image-Count` | Nothing | `1` | Nothing. Routing and display only |
-| `X-CI-Project`, `X-CI-Pipeline-Url`, `X-CI-Commit-Sha` | Nothing | `team/app`, `https://ci.example/1`, `0a1b2c3` | Nothing. Set only inside GitLab CI, routing and display only |
+| `X-Registry` | Nothing, unless a route tests it | `registry.example.com` | Nothing. The registry the processor trusts is the body's `registry` field and **Source Registry URL**, never this header |
+| `X-Image-Count` | Nothing, unless a route tests it | `1` | Nothing. Routing and display only |
+| `X-CI-Project`, `X-CI-Pipeline-Url`, `X-CI-Commit-Sha` | Nothing, unless a route tests them | `team/app`, `https://ci.example/1`, `0a1b2c3` | Nothing. Set only inside GitLab CI, routing and display only |
 
 ### Compute `X-Sha256` for a hand-written body
 

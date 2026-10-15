@@ -1,5 +1,7 @@
 # Building the O3 loopback flow by hand: ListenHTTP on 127.0.0.1
 
+> **Archived.** This page describes the O3 loopback flow, a design the project did not adopt. It is kept for reference. The supported way to build the transfer is [the image transfer runbook](../runbooks/image-transfer-build-by-hand.md).
+
 A script streams a blob from the registry straight into a `ListenHTTP` on the same node, so the layer becomes FlowFile content with no staging disk. Choice and evidence: [ADR 0006](../decisions/adr-0006-moving-large-images-through-nifi.md), option O3. Hosts are placeholders: `registry.example.com`, NiFi cert name `nifi-loopback`.
 
 ```text
