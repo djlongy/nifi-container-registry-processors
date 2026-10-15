@@ -259,9 +259,9 @@ In each processor's **Configure, Settings, Automatically Terminate Relationships
 | Processor | Auto-terminate |
 |---|---|
 | ReceiveWebhook | None |
-| PlanTransfer | None |
+| PlanTransfer | `original` |
 | SplitJobs | `original` |
-| RouteTransfer | `stale`, `waiting` |
+| RouteTransfer | `original`, `stale`, `waiting` |
 | FetchBlob | `Original` |
 | HashContent | None |
 | RetryTransfer | None |
@@ -602,7 +602,7 @@ In each processor's **Configure, Settings, Automatically Terminate Relationships
 
 | Processor | Auto-terminate |
 |---|---|
-| RouteTransfer | `complete` |
+| RouteTransfer | `original`, `complete` |
 | UploadContent | `Response` |
 | RetryTransfer | None |
 | Hold | `success` (processor stays disabled) |
