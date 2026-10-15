@@ -13,7 +13,7 @@ import PullContainerImages
 import PushContainerImages
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
-READMES = [os.path.join(ROOT, "README.md"), os.path.join(ROOT, "python", "container_registry", "README.md")]
+READMES = [os.path.join(ROOT, "README.md"), os.path.join(ROOT, "python", "container-registry", "README.md")]
 PROCESSORS = {m.__name__: getattr(m, m.__name__) for m in (PullContainerImages, ExportContainerImages, PlanRegistryTransfer, PushContainerImages)}
 BLOCK = re.compile(r"(<!-- properties:(\w+) -->\n).*?(<!-- /properties -->)", re.S)
 
