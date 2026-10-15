@@ -138,7 +138,7 @@
         "waiting"
       ],
       "back_pressure_data_size_threshold": "20 GB",
-      "back_pressure_object_threshold": 20
+      "back_pressure_object_threshold": 10000
     },
     {
       "type": "connection",
@@ -175,7 +175,7 @@
         "retry"
       ],
       "back_pressure_data_size_threshold": "20 GB",
-      "back_pressure_object_threshold": 20
+      "back_pressure_object_threshold": 10000
     },
     {
       "type": "connection",
