@@ -135,12 +135,12 @@ class PushContainerImages(FlowFileTransform):
     MOVE_TAGS = PropertyDescriptor(
         name="Move Existing Tags",
         description=(
-            "Let a push move a tag that already points at another digest in the target registry. "
-            "Default false: such a tar fails with registry.error and nothing is pushed. A tag already"
-            " at the right digest is skipped either way."),
+            "Move a tag that already points at another digest in the target registry, as docker push does. "
+            "Default true. Set false to protect tags: such a tar then fails with registry.error and nothing "
+            "is pushed. A tag already at the right digest is skipped either way."),
         required=True,
         allowable_values=["true", "false"],
-        default_value="false")
+        default_value="true")
     TIMEOUT = PropertyDescriptor(
         name="Request Timeout",
         description=(
