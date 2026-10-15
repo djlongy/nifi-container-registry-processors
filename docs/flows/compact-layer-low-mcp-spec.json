@@ -39,7 +39,7 @@
       "bundle": {
         "group": "org.apache.nifi",
         "artifact": "python-extensions",
-        "version": "1.5.1"
+        "version": "1.5.2"
       }
     },
     {
@@ -76,7 +76,7 @@
       "bundle": {
         "group": "org.apache.nifi",
         "artifact": "python-extensions",
-        "version": "1.5.1"
+        "version": "1.5.2"
       }
     },
     {
