@@ -20,15 +20,13 @@ Copy this directory into the Python extensions directory (`nifi.python.extension
 cp -r python/container-registry /opt/nifi/nifi-current/python_extensions/
 ```
 
-Upgrading from a release that installed `python_extensions/container_registry` (underscore): delete that directory. NiFi loads every `.py` file it finds, so the old copy would register each processor a second time.
-
 On Kubernetes, build `python/Containerfile` and copy from it in an init container, so every pod has the processors before NiFi starts:
 
 ```yaml
 initContainers:
   - name: python-extensions
     image: <registry>/<ns>/nifi-container-registry-python@sha256:<digest>
-    command: ["sh", "-c", "rm -rf /target/container_registry /target/container-registry && cp -r /extensions/container-registry /target/"]
+    command: ["sh", "-c", "rm -rf /target/container-registry && cp -r /extensions/container-registry /target/"]
     volumeMounts:
       - name: python-extensions
         mountPath: /target
