@@ -1,5 +1,6 @@
 import base64
 import json
+import time
 import urllib.parse
 
 from nifiapi.flowfiletransform import FlowFileTransform, FlowFileTransformResult
@@ -16,6 +17,11 @@ AUTH_HEADER = 'registry.auth.header'
 HTTP_STATUS = 'invokehttp.status.code'
 REGISTRY_PREFIX = 'registry.'
 MEDIA_TYPE = 'media.type'
+ERROR = 'registry.error'
+RETRY_MAX = 'registry.retry.max'
+WAIT_SINCE, WAIT_CHECKS, WAIT_NEXT = 'registry.wait.since', 'registry.wait.checks', 'registry.wait.next'
+WAIT_RETRIES = '1000000'  # RetryFlowFile's count never ends a wait; Stale After Hours does
+FIRST_CHECK, LAST_CHECK = 30, 1800  # seconds between dependency checks: doubles from 30 s up to 30 min
 WRITE_SCOPE = 'pull,push'
 
 class RouteRegistryTransfer(FlowFileTransform):
@@ -44,7 +50,11 @@ class RouteRegistryTransfer(FlowFileTransform):
     TIMEOUT = PropertyDescriptor(name="Request Timeout", description="Metadata request timeout in seconds; native payload timeouts are separate.",
                                 required=True, default_value="60",
                                 validators=[StandardValidators.POSITIVE_INTEGER_VALIDATOR])
-    PROPERTIES = [SIDE, URL, USER, PASSWORD, SSL, REPOSITORY, TIMEOUT]
+    STALE = PropertyDescriptor(name="Stale After Hours",
+                               description="High side: how long a manifest may wait for its layers or platform manifests "
+                                           "before it goes to stale with a report of what is missing.",
+                               required=True, default_value="24", validators=[StandardValidators.POSITIVE_INTEGER_VALIDATOR])
+    PROPERTIES = [SIDE, URL, USER, PASSWORD, SSL, REPOSITORY, TIMEOUT, STALE]
 
     def __init__(self, **kwargs):
         super().__init__()
@@ -58,6 +68,7 @@ class RouteRegistryTransfer(FlowFileTransform):
             ("hash", "Native CryptographicHashContent; success returns here"),
             ("ready", "Verified content ready for the diode, or committed at the destination"),
             ("retry", "Penalised RetryFlowFile, then back here"),
+            ("stale", "High side: a manifest whose layers or platform manifests did not all arrive within Stale After Hours"),
             ("failure", "Preserved content for a disabled hold processor")]]
 
     @staticmethod
@@ -66,12 +77,11 @@ class RouteRegistryTransfer(FlowFileTransform):
 
     @classmethod
     def _finish(cls, relationship, message=""):
-        return cls._result(relationship, {STAGE: "", AUTH_HEADER: "", "registry.error": message})
+        return cls._result(relationship, {STAGE: "", AUTH_HEADER: "", ERROR: message})
 
     @classmethod
-    def _retry(cls, message, dependencies=False):
-        return cls._result("retry", {STAGE: "", AUTH_HEADER: "", "registry.error": message,
-                                     "registry.retry.max": "120" if dependencies else "3"})
+    def _retry(cls, message):
+        return cls._result("retry", {STAGE: "", AUTH_HEADER: "", ERROR: message, RETRY_MAX: "3"})
 
     @staticmethod
     def _http(method, url, header, media_type, stage):
@@ -164,7 +174,15 @@ class RouteRegistryTransfer(FlowFileTransform):
                 raise RegistryError(f"manifest dependency HEAD failed (HTTP {status})")
         return dependencies, missing
 
-    def _incomplete(self, facts, dependencies, missing):
+    @staticmethod
+    def _wait_pending(flowfile):
+        """A waiting manifest whose next dependency check is not due: back to RetryFlowFile without a registry call."""
+        due = float(flowfile.getAttribute(WAIT_NEXT) or 0)
+        if time.time() < due:
+            return FlowFileTransformResult("retry", attributes={RETRY_MAX: WAIT_RETRIES})
+        return None
+
+    def _incomplete(self, flowfile, facts, dependencies, missing, stale_hours):
         if facts["kind"] == "index":
             what = "platform manifests " + ",".join(str(n + 1) for n in missing) + f" of {len(dependencies)}"
         else:
@@ -173,8 +191,18 @@ class RouteRegistryTransfer(FlowFileTransform):
             if 0 in missing:
                 what += " and the config blob"
         message = f"{facts['image']} ({facts['platform']}) incomplete: missing {what}. Check code {facts['check']}"
-        self.logger.warn(message)
-        return self._retry(message, dependencies=True)
+        now = time.time()
+        since = float(flowfile.getAttribute(WAIT_SINCE) or now)
+        checks = int(flowfile.getAttribute(WAIT_CHECKS) or 0) + 1
+        if now - since >= stale_hours * 3600:
+            self.logger.warn(f"{message}; waited {stale_hours} h, moved to stale")
+            # Cleared so that a stale manifest replayed after a resend starts a fresh wait.
+            return self._result("stale", {STAGE: "", AUTH_HEADER: "", ERROR: message,
+                                          WAIT_SINCE: "", WAIT_CHECKS: "", WAIT_NEXT: ""})
+        delay = min(FIRST_CHECK * 2 ** (checks - 1), LAST_CHECK)
+        return self._result("retry", {STAGE: "", AUTH_HEADER: "", ERROR: message,
+                                      RETRY_MAX: WAIT_RETRIES, WAIT_SINCE: str(since),
+                                      WAIT_CHECKS: str(checks), WAIT_NEXT: str(now + delay)})
 
     def _prepare_blob(self, client, repository, digest):
         response = client._send(repository, WRITE_SCOPE, "HEAD", f"{repository}/blobs/{digest}")
@@ -191,10 +219,10 @@ class RouteRegistryTransfer(FlowFileTransform):
         return self._result("http", self._http("PUT", url, self._header(client, repository, WRITE_SCOPE),
                                                "application/octet-stream", "upload"))
 
-    def _prepare_manifest(self, client, repository, facts):
+    def _prepare_manifest(self, client, repository, facts, flowfile, stale_hours):
         dependencies, missing = self._dependencies(client, repository, facts)
         if missing:
-            return self._incomplete(facts, dependencies, missing)
+            return self._incomplete(flowfile, facts, dependencies, missing, stale_hours)
         media_type = facts[MEDIA_TYPE]
         if media_type not in [t.strip() for t in MANIFEST_TYPES.split(",")]:
             raise RegistryError("unsupported manifest media type")
@@ -216,6 +244,10 @@ class RouteRegistryTransfer(FlowFileTransform):
             http = self._http("GET", f"{client.base}/v2/{repository}/blobs/{digest}",
                               self._header(client, repository, "pull"), "application/octet-stream", "fetch")
             return self._result("http", {**attributes, **http})
+        if facts["kind"] in ("manifest", "index"):
+            pending = self._wait_pending(flowfile)
+            if pending:
+                return pending
         repository = prop(self.REPOSITORY) or repository
         if not REPOSITORY.fullmatch(repository):
             raise RegistryError("invalid target repository")
@@ -226,7 +258,7 @@ class RouteRegistryTransfer(FlowFileTransform):
         response.close()
         if facts["kind"] in ("blob", "config"):
             return self._prepare_blob(client, repository, digest)
-        return self._prepare_manifest(client, repository, facts)
+        return self._prepare_manifest(client, repository, facts, flowfile, int(prop(self.STALE)))
 
     def transform(self, context, flowfile):
         side = context.getProperty(self.SIDE).getValue()
