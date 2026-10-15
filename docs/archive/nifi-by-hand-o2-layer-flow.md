@@ -1,6 +1,8 @@
 # Building the O2 layer flow by hand: one FlowFile per layer
 
-Each layer of an image becomes its own FlowFile, moved by `InvokeHTTP`, so Python never holds layer bytes. Choice and evidence: [ADR 0006](../decisions/adr-0006-moving-large-images-through-nifi.md), option O2. This page lists the processors and the properties that matter; it assumes you know the canvas from [nifi-by-hand.md](nifi-by-hand.md). The push step on the high side is [nifi-by-hand-o4-push.md](nifi-by-hand-o4-push.md). Hosts are placeholders: source `registry.example.com`, target `registry-high.example.com`.
+> **Archived.** This page describes the O2 layer flow, a design the project did not adopt. It is kept for reference. The supported way to build the transfer is [the image transfer runbook](../runbooks/image-transfer-build-by-hand.md).
+
+Each layer of an image becomes its own FlowFile, moved by `InvokeHTTP`, so Python never holds layer bytes. Choice and evidence: [ADR 0006](../decisions/adr-0006-moving-large-images-through-nifi.md), option O2. This page lists the processors and the properties that matter; it assumes you know the canvas from [nifi-by-hand.md](../runbooks/nifi-by-hand.md). The push step on the high side is [nifi-by-hand-o4-push.md](nifi-by-hand-o4-push.md). Hosts are placeholders: source `registry.example.com`, target `registry-high.example.com`.
 
 ## Parameters
 

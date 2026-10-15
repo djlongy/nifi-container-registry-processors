@@ -1,5 +1,7 @@
 # Building the O4 push flow by hand: ExecuteStreamCommand from stdin
 
+> **Archived.** This page describes the O4 push flow, a design the project did not adopt. It is kept for reference. The supported way to build the transfer is [the image transfer runbook](../runbooks/image-transfer-build-by-hand.md).
+
 Pushes a blob or a manifest FlowFile into a registry without Python holding the bytes. Choice and evidence: [ADR 0006](../decisions/adr-0006-moving-large-images-through-nifi.md), option O4. The script is [python/scripts/push_from_stdin.py](../../python/scripts/push_from_stdin.py).
 
 ```text
