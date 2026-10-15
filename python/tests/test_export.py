@@ -1,5 +1,6 @@
 """The export tar: write_export, push_export and plan_image against an in-memory registry."""
 import os
+import tarfile
 import tempfile
 import unittest
 
@@ -55,6 +56,65 @@ class Collisions(unittest.TestCase):
         path = export(source, [("a/app", "v1", first), ("b/app", "v1", first)])
         pushed, present, _ = c.push_export(FakeRegistry(), path, rewrite="merged")
         self.assertEqual(pushed + present, 1)
+
+
+def without(path, member_suffix):
+    """A copy of the export tar at path with the members whose name ends in member_suffix left out."""
+    copy = path + ".cut"
+    with tarfile.open(path, "r:") as source, tarfile.open(copy, "w", format=tarfile.PAX_FORMAT) as out:
+        for member in source:
+            if not member.name.endswith(member_suffix):
+                out.addfile(member, source.extractfile(member) if member.isfile() else None)
+    return copy
+
+
+class IncompleteTar(unittest.TestCase):
+    def setUp(self):
+        self.source = FakeRegistry()
+        self.root = self.source.add_image("team/app", "1.0", "one")
+        self.path = export(self.source, [("team/app", "1.0", self.root)])
+        layer = digest(b"one")[7:]
+        self.cut = without(self.path, "/" + layer)
+
+    def test_a_tar_without_a_layer_is_refused_before_anything_is_pushed(self):
+        target = FakeRegistry()
+        with self.assertRaises(c.RegistryError) as raised:
+            c.push_export(target, self.cut)
+        self.assertIn(digest(b"one"), str(raised.exception))
+        self.assertEqual((target.blobs, target.manifests, target.puts), ({}, {}, []))
+
+    def test_a_layer_the_tar_lacks_but_the_registry_has_is_not_a_problem(self):
+        target = FakeRegistry()
+        target.add_blob("team/app", b"one")
+        pushed, _present, _lines = c.push_export(target, self.cut)
+        self.assertEqual(pushed, 1)
+        self.assertEqual(target.manifest_digest("team/app", "1.0"), self.root)
+
+
+class IncompleteIndex(unittest.TestCase):
+    def setUp(self):
+        self.source = FakeRegistry()
+        self.first = self.source.add_image("team/app", "", "one")
+        self.second = self.source.add_image("team/app", "", "two")
+        self.root = self.source.add_index("team/app", "1.0", [(self.first, fake_registry.MANIFEST),
+                                                              (self.second, fake_registry.MANIFEST)])
+        self.cut = without(export(self.source, [("team/app", "1.0", self.root)]), self.second[7:] + ".manifest.json")
+
+    def test_a_platform_the_tar_lacks_and_the_registry_does_not_have_is_refused(self):
+        target = FakeRegistry()
+        with self.assertRaises(c.RegistryError) as raised:
+            c.push_export(target, self.cut)
+        self.assertIn(self.second, str(raised.exception))
+        self.assertEqual((target.blobs, target.manifests, target.puts), ({}, {}, []))
+
+    def test_a_platform_the_tar_lacks_but_the_registry_has_is_pushed(self):
+        target = FakeRegistry()
+        target.manifests[("team/app", self.second)] = self.source.manifests[("team/app", self.second)]
+        for key, data in self.source.blobs.items():
+            target.blobs[key] = data
+        pushed, _present, _lines = c.push_export(target, self.cut)
+        self.assertEqual(pushed, 1)
+        self.assertEqual(target.manifest_digest("team/app", "1.0"), self.root)
 
 
 class TagMoves(unittest.TestCase):

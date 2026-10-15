@@ -22,6 +22,12 @@ import push_from_stdin as push
 ACCEPT = ("application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, "
           "application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json")
 POLL = 3
+FOREIGN_LAYERS = {  # the same set container_registry_client uses: served from their urls, never pushed to a registry
+    "application/vnd.docker.image.rootfs.foreign.diff.tar.gzip",
+    "application/vnd.oci.image.layer.nondistributable.v1.tar",
+    "application/vnd.oci.image.layer.nondistributable.v1.tar+gzip",
+    "application/vnd.oci.image.layer.nondistributable.v1.tar+zstd",
+}
 
 
 def listing(numbers):
@@ -30,10 +36,13 @@ def listing(numbers):
 
 
 def needs(document):
-    """[(kind, digest)] the manifest names: its config and layers, or its child manifests."""
+    """[(kind, digest)] the manifest names: its config and layers, or its child manifests. A foreign layer (urls and
+    a foreign media type) is not in the registry and the transfer never sends it, so it is not waited for."""
     if "manifests" in document:
         return [("manifests", child["digest"]) for child in document["manifests"]]
-    return [("blobs", document["config"]["digest"])] + [("blobs", layer["digest"]) for layer in document["layers"]]
+    return [("blobs", document["config"]["digest"])] + [
+        ("blobs", layer["digest"]) for layer in document["layers"]
+        if not (layer.get("urls") and layer.get("mediaType") in FOREIGN_LAYERS)]
 
 
 def present(registry, repository, kind, digest):
@@ -60,6 +69,7 @@ def main(argv):
         wait = float(argv[4])
     except ValueError:
         push.fail(15, f"wait {argv[4]!r} is not a number of seconds")
+    push.check_names(repository, reference)
     platform = argv[5] if len(argv) == 6 else ""
     raw = sys.stdin.buffer.read(push.LIMIT + 1)
     if len(raw) > push.LIMIT:

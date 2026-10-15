@@ -50,9 +50,8 @@ Troubleshoot a stuck or failed FlowFile in this order: `registry.error`, then `r
 | `registry.reference` | read, written on low | The tag (or digest) a manifest is published under |
 | `registry.needs`, `registry.layer.count` | read, written on low | A manifest's blobs or an index's manifests, in order, and the layer count |
 | `registry.check` | read, written on low | The check code a resend must quote |
-| `registry.manifest.tag.url` | written | The tag PUT that follows a committed digest PUT |
-| `resp.Docker-Content-Digest` | read | The digest the destination reports for a manifest. A different digest fails |
-| `registry.retry.max` | written | Retries RetryFlowFile allows: `3` after an error, unlimited while a manifest waits |
+| `resp.Docker-Content-Digest` | read | The digest the destination reports for a manifest. A different digest fails. A registry that sends no such header is asked for the stored digest instead. The tag PUT URL and its Bearer token are rebuilt from Registry URL and Target Repository, never read from an attribute |
+| `registry.retry.max`, `registry.retries`, `registry.retries.uuid` | written | RetryFlowFile's limit, count and owner. After an error the limit is the current count plus `3`; while a manifest waits it is unlimited and the count stays at `0`. Every successful step, `complete`, `waiting` and `stale` set the count to `0` and blank the owner, so a retry on the low side never fails the high side's Reuse Mode `fail` and a long wait never uses up the retries of a later error |
 | `registry.wait.since`, `registry.wait.checks`, `registry.wait.next` | written, high | A manifest waiting for its layers: when the wait began (epoch seconds), checks so far, and when the next check is due. Cleared when the manifest moves to `stale` |
 | `content_SHA-256` | read, low | CryptographicHashContent's result, compared with `registry.digest` |
 

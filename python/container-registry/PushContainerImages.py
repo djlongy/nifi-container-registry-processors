@@ -28,6 +28,25 @@ def _lock(path):
     return fd
 
 
+def _contain(template, path):
+    """Raise unless path, a template with attribute expressions filled in, stays strictly inside the directory the
+    template fixes in front of its first expression. A filename that arrives with the data (../x, or a symlink the
+    directory holds) must not choose which file is renamed, read or deleted. A template with no expression is
+    the operator's own path, and no path means the tar is the FlowFile content."""
+    start = template.find("${") if path else -1
+    if start < 0:
+        return
+    fixed = template[:start]
+    directory = fixed[:fixed.rfind("/") + 1]
+    if not directory.strip("/"):
+        raise RegistryError("Input Tar Path built from an expression needs a fixed directory in front of the "
+                            f"expression, such as /data/in/${{filename}}: {template}")
+    root = os.path.realpath(directory)
+    real = os.path.realpath(path)
+    if real == root or os.path.commonpath([root, real]) != root:
+        raise RegistryError(f"Input Tar Path {path} is outside {root}")
+
+
 def _take(path):
     """(file to claim, fd holding its lock). Input Tar Path itself, else the one <path>.pushing-* a killed push left.
     A leftover that is locked belongs to a push still running and is not touched."""
@@ -174,6 +193,7 @@ class PushContainerImages(FlowFileTransform):
         delete = bool(path) and context.getProperty(self.DELETE_TAR).getValue() == "true"
         temporary = claimed = lock = None
         try:
+            _contain(context.getProperty(self.TAR_FILE).getValue(), path)
             client = RegistryClient(self._value(context, self.REGISTRY_URL, flowfile),
                                     self._value(context, self.USERNAME, flowfile),
                                     context.getProperty(self.PASSWORD).getValue(),

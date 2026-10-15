@@ -551,7 +551,8 @@ def export_summary(path):
 
 
 def read_export(path):
-    """The images in an export tar: [(entry, root bytes, [(child digest, bytes)], {blob: member name})]."""
+    """The images in an export tar: [(entry, root bytes, [(child digest, bytes or None, media type)], {blob: member name or None})].
+    Every blob and child the image names is listed; None means the tar does not hold it."""
     with tarfile.open(path, "r:") as tar:
         members = {m.name[2:] if m.name.startswith("./") else m.name: m for m in tar.getmembers()}
         if sum(m.size for n, m in members.items() if KEPT.fullmatch(n)) > 256 * 1024 * 1024:
@@ -591,8 +592,11 @@ def read_export(path):
                     if not DIGEST.fullmatch(digest):
                         raise RegistryError(f"{entry['target']}:{entry['tag']}: unsupported child digest {digest}")
                     name = f"{entry['dir']}/{digest[7:]}.manifest.json"
-                    if name not in members or any(d == digest for d, *_ in children):
-                        continue  # a platform the export left out, or one already read
+                    if any(d == digest for d, *_ in children):
+                        continue  # already read
+                    if name not in members:
+                        children.append((digest, None, child.get("mediaType")))  # left out of the tar
+                        continue
                     raw = read(name)
                     if "sha256:" + sha256_hex(raw) != digest:
                         raise RegistryError(f"{name} does not match its digest in the index")
@@ -604,6 +608,7 @@ def read_export(path):
             for manifest in manifests:
                 for digest in _blobs_of(manifest):
                     name = f"{entry['dir']}/{digest[7:]}"
+                    blobs[digest] = None  # not in the tar, unless found below
                     if name in members:
                         member = members[name]
                         if member.islnk():  # a repeat blob: upload from the entry that holds the bytes
@@ -648,6 +653,13 @@ def push_export(client, path, rewrite=None, strip=False, move_tags=True, log=Non
             present += 1
         else:
             plan.append((repository, entry, root, media_type, children, blobs))
+    for repository, entry, _root, _type, _children, blobs in plan:
+        absent = [d for d, name in blobs.items() if name is None and not client.blob_exists(repository, d)]
+        absent += [d for d, raw, _type in children if raw is None and not client.manifest_digest(repository, d)]
+        if absent:
+            raise RegistryError(f"{repository}:{entry['tag']}: the tar does not hold {len(absent)} blob(s) or manifest(s) "
+                                f"its manifest names and {client.host} does not have them either ({absent[0]}); "
+                                "nothing is pushed")
     uploaded = {}  # digest -> first repository that has it, for mounts
     with tarfile.open(path, "r:") as tar:
         for repository, entry, root, media_type, children, blobs in plan:
@@ -655,6 +667,8 @@ def push_export(client, path, rewrite=None, strip=False, move_tags=True, log=Non
                 if client.blob_exists(repository, digest):
                     uploaded.setdefault(digest, repository)
                     continue
+                if name is None:
+                    raise RegistryError(f"{repository}: blob {digest} is not in the tar and is gone from {client.host}")
                 upload = None
                 if digest in uploaded and uploaded[digest] != repository:
                     upload = client.start_upload(repository, digest, uploaded[digest])
@@ -679,7 +693,8 @@ def push_export(client, path, rewrite=None, strip=False, move_tags=True, log=Non
                     raise RegistryError(f"blob {digest} in the tar does not match its digest")
                 uploaded.setdefault(digest, repository)
             for digest, raw, child_type in children:
-                client.put_manifest(repository, digest, raw, child_type)
+                if raw is not None:
+                    client.put_manifest(repository, digest, raw, child_type)
             client.put_manifest(repository, entry["tag"], root, media_type)
             after = client.manifest_digest(repository, entry["tag"])
             if after != entry["digest"]:

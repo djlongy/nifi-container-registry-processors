@@ -88,6 +88,23 @@ class Leftover(unittest.TestCase):
         self.assertIsNone(processor.create(context))
 
 
+class DynamicProperties(unittest.TestCase):
+    def emit(self, **dynamic):
+        registry = FakeRegistry()
+        registry.add_image("team/app", "1.0", "one")
+        processor, context = make_pull(registry, tempfile.mkdtemp(), **dynamic)
+        return processor.create(context).attributes
+
+    def test_text_after_a_leading_reference_is_kept(self):
+        attributes = self.emit(**{"copy": "${filename}.done", "both": "${filename}-${registry.host}"})
+        self.assertEqual(attributes["copy"], attributes["filename"] + ".done")
+        self.assertEqual(attributes["both"], attributes["filename"] + "-" + attributes["registry.host"])
+
+    def test_a_function_after_a_leading_reference_is_applied(self):
+        attributes = self.emit(lower="${filename}/${registry.host:toLower()}")
+        self.assertEqual(attributes["lower"], attributes["filename"] + "/" + attributes["registry.host"].lower())
+
+
 class Failover(unittest.TestCase):
     """The tar of a lost FlowFile is on the dead node's disk; the cluster state has to say what it held."""
     def setUp(self):
@@ -175,6 +192,49 @@ class Failover(unittest.TestCase):
             recovered = self.b.create(self.cb)
         self.assertEqual(recovered.attributes["registry.images"], second.attributes["registry.images"])
         self.assertNotEqual(recovered.attributes["registry.images"], first.attributes["registry.images"])
+
+    def test_a_digest_only_image_list_entry_is_exported_again_by_the_new_primary(self):
+        digest = self.registry.add_image("team/pinned", "1.0", "pin")
+        values = {"Image List": f"team/pinned@{digest}"}
+        a, ca = make_pull(self.registry, self.node_a, values, self.state)
+        b, cb = make_pull(self.registry, self.node_b, values, self.state)
+        lost = a.create(ca)  # node A dies before NiFi commits this result
+        self.assertIn(f"team/pinned:sha256-{digest[7:19]}@{digest}", lost.attributes["registry.images"])
+        with self.later(2 * pull_module.LEFTOVER_AFTER):
+            recovered = b.create(cb)
+        self.assertIsNotNone(recovered, "a digest-only entry was recorded as exported and never delivered")
+        self.assertEqual(recovered.attributes["registry.images"], lost.attributes["registry.images"])
+
+    def test_a_digest_only_entry_recorded_by_an_older_version_is_exported_by_the_regular_run(self):
+        digest = self.registry.add_image("team/pinned", "1.0", "pin")
+        values = {"Image List": f"team/pinned@{digest}"}
+        a, ca = make_pull(self.registry, self.node_a, values, self.state)
+        b, cb = make_pull(self.registry, self.node_b, values, self.state)
+        a.create(ca)
+        snapshot = self.state.getState("CLUSTER")
+        pending = pull_module.load_pending(snapshot)
+        for record in pending:
+            record["images"] = [image[:3] for image in record["images"]]  # no full digest, as before this fix
+        self.state.setState(pull_module.dump_state(pull_module.load_state(snapshot), pending), "CLUSTER")
+        with self.later(2 * pull_module.LEFTOVER_AFTER):
+            recovered = b.create(cb)  # nothing to rebuild it from, so the regular run takes it from the list
+        self.assertIsNotNone(recovered)
+        self.assertIn(f"@{digest}", recovered.attributes["registry.images"])
+
+    def test_a_registry_error_while_resolving_a_lost_tag_does_not_crash_the_run(self):
+        self.assertIsNotNone(self.a.create(self.ca))
+        real, calls = self.registry.manifest_digest, []
+
+        def digest_once_down(repository, reference):
+            calls.append(reference)
+            if len(calls) == 1:
+                raise RegistryError("HTTP 503")  # the lookup that rebuilds the lost export
+            return real(repository, reference)
+        with self.later(2 * pull_module.LEFTOVER_AFTER), \
+                unittest.mock.patch.object(self.registry, "manifest_digest", digest_once_down):
+            recovered = self.b.create(self.cb)  # was an UnboundLocalError on digest
+        self.assertIn("waits for the next run", self.b.logger.text())
+        self.assertIsNotNone(recovered, "the regular run takes the tag the failed rebuild forgot")
 
 
 class Collision(unittest.TestCase):
@@ -324,7 +384,7 @@ class StateSize(unittest.TestCase):
         snapshot = context.state.getState("CLUSTER")
         record = pull_module.load_pending(snapshot)[0]
         self.assertEqual(len(record["images"]), 300)
-        self.assertTrue(all(len(digest) == 16 for _r, _t, digest in record["images"]))
+        self.assertTrue(all(len(digest) == 16 for _r, _t, digest, *_ in record["images"]))
         self.assertLess(len(pull_module._pack(record["images"])), 1.2 * len(pull_module._pack(pull_module.load_state(snapshot))))
 
     def test_the_state_error_names_max_export_size(self):
