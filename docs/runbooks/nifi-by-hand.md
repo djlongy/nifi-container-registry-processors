@@ -84,7 +84,7 @@ ${X-Artifact-Type:equals('container-images-request')}
 | Delete Input Tar | `true` |
 | Rewrite Target Base Path | empty (images keep their repository name) |
 | Strip Target Base Path | `false` (default) |
-| Move Existing Tags | `false` (default; a tag at another digest fails the tar) |
+| Move Existing Tags | `true` (default; a tag at another digest moves, as docker push does. `false` fails the tar instead) |
 | Request Timeout | `600` (default) |
 
    Set Rewrite and Strip together and the push fails: use at most one.
