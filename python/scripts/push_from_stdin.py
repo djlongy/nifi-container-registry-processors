@@ -4,6 +4,8 @@ FlowFile content arrives on stdin, so the Python API's getContentsAsBytes limit 
 
 usage: push_from_stdin.py <blob|manifest> <registry URL> <repository> <digest for a blob | tag or digest for a manifest>
 env:   REGISTRY_USER, REGISTRY_PASSWORD (empty password: no credentials sent, for an open registry)
+Credentials go only to the registry and to its token realm: a redirect is never followed, and the realm must be https
+(plain http only on the registry's own host, as the NiFi processors require).
 blob:     POST /v2/<repo>/blobs/uploads/, one chunked PATCH from stdin, PUT ?digest=. Memory is one 1 MiB buffer.
 manifest: stdin is read whole (limit 64 MiB) and PUT with its bytes unchanged, so its digest does not move. The
           Content-Type is the document's own mediaType.
@@ -23,6 +25,9 @@ import urllib.parse
 import urllib.request
 
 CHUNK, LIMIT = 1 << 20, 64 << 20
+DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+TAG = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}")
+REPOSITORY = re.compile(r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*")
 DEFAULT_MANIFEST_TYPE = "application/vnd.oci.image.manifest.v1+json"
 
 
@@ -38,15 +43,47 @@ def target(url):
     return parsed
 
 
+def check_names(repository, reference=None, digest_only=False):
+    """Exit 15 unless the repository, and the tag or digest when given, are plain distribution names. They go into a
+    URL path, so nothing that could add a path segment, a query or a host is accepted. The grammar is the one the
+    NiFi processors use in container_registry_client."""
+    if not REPOSITORY.fullmatch(repository):
+        fail(15, f"repository {repository!r} is not a valid repository name")
+    if reference is not None:
+        valid = DIGEST.fullmatch(reference) or (not digest_only and TAG.fullmatch(reference))
+        if not valid:
+            fail(15, f"{reference!r} is not a valid " + ("digest" if digest_only else "tag or digest"))
+
+
 def challenge_params(header):
     return dict(re.findall(r'(\w+)="([^"]*)"', header))
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect is an answer, never followed: urllib would send the Authorization header on to wherever it points."""
+
+    def redirect_request(self, *args):
+        return None
+
+
+def open_plain(request, timeout=60):
+    """urlopen without redirects; a 3xx comes back as an HTTPError."""
+    return urllib.request.build_opener(NoRedirect).open(request, timeout=timeout)
+
+
+def realm_allowed(realm, parsed):
+    """Where the credentials may go: an https token realm, or http only on the registry's own host, as the NiFi
+    processors' RegistryClient._authorize does."""
+    target = urllib.parse.urlparse(realm)
+    return target.scheme == "https" or (target.scheme == "http" and parsed.scheme == "http"
+                                        and target.hostname == parsed.hostname)
 
 
 def authorization(base, parsed, repository, user, password, actions="pull,push"):
     """The Authorization header the registry asks for: none for an open registry, Basic, or a Bearer token from the
     realm its WWW-Authenticate names. Raises SystemExit(10) when the credentials are refused."""
     try:
-        urllib.request.urlopen(urllib.request.Request(f"{base}/v2/"), timeout=60).read()
+        open_plain(urllib.request.Request(f"{base}/v2/")).read()
         return {}
     except urllib.error.HTTPError as error:
         if error.code != 401:
@@ -59,8 +96,10 @@ def authorization(base, parsed, repository, user, password, actions="pull,push")
     basic = {"Authorization": "Basic " + base64.b64encode(f"{user}:{password}".encode()).decode()}
     if not header.lower().startswith("bearer"):
         try:
-            urllib.request.urlopen(urllib.request.Request(f"{base}/v2/", headers=basic), timeout=60).read()
+            open_plain(urllib.request.Request(f"{base}/v2/", headers=basic)).read()
         except urllib.error.HTTPError as error:
+            if 300 <= error.code < 400:
+                fail(15, f"GET /v2/ redirected (HTTP {error.code}); a redirect is never followed with credentials")
             fail(10, f"the registry refused the credentials: HTTP {error.code}")
         except OSError as error:
             fail(15, f"cannot reach {parsed.netloc}: {error}")
@@ -68,11 +107,15 @@ def authorization(base, parsed, repository, user, password, actions="pull,push")
     params = challenge_params(header)
     query = {"service": params.get("service", parsed.netloc), "scope": f"repository:{repository}:{actions}"}
     realm = params.get("realm", f"{base}/v2/auth")
+    if not realm_allowed(realm, parsed):
+        fail(10, f"the registry names a token realm {realm.split('?')[0]} that is not https; credentials not sent")
+    separator = "&" if "?" in realm else "?"
     try:
-        with urllib.request.urlopen(urllib.request.Request(f"{realm}?{urllib.parse.urlencode(query)}", headers=basic),
-                                    timeout=60) as response:
+        with open_plain(urllib.request.Request(f"{realm}{separator}{urllib.parse.urlencode(query)}", headers=basic)) as response:
             body = json.load(response)
     except urllib.error.HTTPError as error:
+        if 300 <= error.code < 400:
+            fail(15, f"token request redirected (HTTP {error.code}); a redirect is never followed with credentials")
         fail(10, f"the registry refused the credentials: HTTP {error.code}")
     except (OSError, ValueError) as error:
         fail(15, f"token request failed: {error}")
@@ -162,6 +205,7 @@ def main(argv):
     if len(argv) != 5 or argv[1] not in ("blob", "manifest"):
         fail(15, "usage: push_from_stdin.py <blob|manifest> <registry URL> <repository> <digest|reference>")
     kind, url, repository, reference = argv[1], argv[2].rstrip("/"), argv[3], argv[4]
+    check_names(repository, reference, digest_only=kind == "blob")
     parsed = target(url)
     started = time.time()
     headers = authorization(url, parsed, repository, os.environ.get("REGISTRY_USER", ""),

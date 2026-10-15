@@ -50,7 +50,7 @@ Scheduling: **Execution** `Primary node`. Custom Text empty. Add attributes as d
 
 Dynamic properties: `REGISTRY_USER` and a sensitive `REGISTRY_PASSWORD`, as in [nifi-by-hand-o4-push.md](nifi-by-hand-o4-push.md) section 5. The script is [post_blob_loopback.py](../../python/scripts/post_blob_loopback.py) (it needs `push_from_stdin.py` beside it). Per try it:
 
-1. Gets the blob from the registry (a Bearer token with `pull` scope when the registry asks for one) and reads it in 1 MiB chunks. A redirect to object storage is followed without the registry credentials.
+1. Gets the blob from the registry (a Bearer token with `pull` scope when the registry asks for one) and reads it in 1 MiB chunks. A redirect to object storage is followed without the registry credentials (at most 3 hops, http or https only, never plain http from an https registry). The address it connects to must be public; an on-premises store such as MinIO on a private address needs `--trusted-storage minio.internal,10.20.0.0/16` (or `LOOPBACK_TRUSTED_STORAGE`). Any other redirect exits 15 and nothing is posted.
 2. POSTs it as a chunked request to `https://127.0.0.1:<port>/<path>` with `Content-Type: application/octet-stream`, your `--header NAME=VALUE` pairs, `X-Blob-Digest`, `filename` and `X-Attempt`, using the client certificate for mTLS.
 3. Sends `--name` (the certificate name) as both the TLS SNI and the `Host` header while connecting to 127.0.0.1, because Jetty answers `400 Invalid SNI` for an IP address.
 4. Retries with waits of 2, 4, 8 ... up to 30 s, up to `--attempts` tries (section 6).
