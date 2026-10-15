@@ -8,7 +8,7 @@ Parameter context `registry-layers`: `src_user`, sensitive `src_password`, `dst_
 
 ## Low side
 
-1. **ListenHTTP** `request`: Base Path `request`, a Listening Port, HTTP Headers to receive as Attributes `X-.*`. Body `{"image":"team/app:1.0","platform":"linux/amd64"}`. Protect the port with mTLS as in [nifi-by-hand-o3-loopback.md](nifi-by-hand-o3-loopback.md).
+1. **ListenHTTP** `request`: Base Path `request`, a Listening Port, HTTP Headers for Attributes `X-.*`. Body `{"image":"team/app:1.0","platform":"linux/amd64"}`. Protect the port with mTLS as in [nifi-by-hand-o3-loopback.md](nifi-by-hand-o3-loopback.md).
 2. **EvaluateJsonPath** `parse`: Destination `flowfile-attribute`, one property per field (`img.repo`, `img.tag`, `platform`).
 3. **InvokeHTTP** `token`: HTTP Method `GET`, HTTP URL `https://registry.example.com/v2/auth?service=registry.example.com&scope=repository:${img.repo}:pull`, Request Username `#{src_user}`, Request Password `#{src_password}`, Response Body Attribute Name `auth.json`, Socket Read Timeout `10 min`. Use `Authorization: Bearer ${auth.json:jsonPath('$.token')}` in the next InvokeHTTP as a dynamic property named `Authorization`.
 4. **InvokeHTTP** `manifest GET`: GET `https://registry.example.com/v2/${img.repo}/manifests/${img.tag}`, dynamic properties `Authorization` as above and `Accept` set to the OCI and Docker manifest and index media types, comma separated. Do not parse or re-serialise the response: the raw bytes are the manifest and their sha256 is its digest.

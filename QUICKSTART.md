@@ -56,7 +56,7 @@ Add a process group and these processors, in this order, connecting each relatio
 
 | # | Processor | Properties | Relationship to the next |
 |---|---|---|---|
-| 1 | ListenHTTP | Listening Port `8081`, Base Path `contentListener`, HTTP Headers to receive as Attributes (Regex) `X-.*` | success |
+| 1 | ListenHTTP | Listening Port `8081`, Base Path `contentListener`, HTTP Headers for Attributes `X-.*` | success |
 | 2 | RouteOnAttribute | Routing Strategy `Route to Property name`, new property `request` = `${X-Artifact-Type:equals('container-images-request')}` | request. Auto-terminate `unmatched` |
 | 3 | ExportContainerImages | Source Registry URL `https://registry.example.com`, Source Registry Username `#{source_registry_user}`, Source Registry Password `#{source_registry_password}`, SSL Context Service the one from step 2, Allowed Repositories `team/*`, Tar Output Directory `#{container-images.tar.dir}` | success. failure to a LogAttribute or a funnel |
 | 4 | PushContainerImages | Target Registry URL `https://registry-high.example.com`, Target Registry Username `#{target_registry_user}`, Target Registry Password `#{target_registry_password}`, SSL Context Service the same, Input Tar Path `#{container-images.tar.dir}/${filename}`, Delete Input Tar `true` | success: auto-terminate. failure to a LogAttribute or a funnel |

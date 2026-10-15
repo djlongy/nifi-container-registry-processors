@@ -26,7 +26,7 @@ Hosts in this page are placeholders: the source registry is `registry.example.co
 |---|---|
 | Base Path | `contentListener` (default) |
 | Listening Port | `8081` |
-| HTTP Headers to receive as Attributes (Regex) | `X-.*` |
+| HTTP Headers for Attributes | `X-.*` |
 | Return Code | `200` (default) |
 
    Leave **SSL Context Service** empty for plain HTTP on a trusted network. To use TLS, choose the StandardSSLContextService here, but it must then hold a keystore as well as the truststore.
