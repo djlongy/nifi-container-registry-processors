@@ -94,7 +94,7 @@ class TransferController(unittest.TestCase):
                "platform": "linux/amd64", "check": "1234abcd"}
         body = json.dumps(job).encode()
         result = self.run_flow("Low", {}, body, len(body))
-        self.assertEqual(result.relationship, "http")
+        self.assertEqual(result.relationship, "prepared")
         self.assertEqual(result.attributes["registry.digest"], DIGEST)
         self.assertEqual(result.attributes["registry.http.method"], "GET")
         self.assertIsNone(result.contents)
@@ -106,18 +106,18 @@ class TransferController(unittest.TestCase):
                "platform": "linux/amd64", "check": "1234abcd", "body": base64.b64encode(raw).decode()}
         body = json.dumps(job).encode()
         result = self.run_flow("Low", {}, body, len(body))
-        self.assertEqual(result.relationship, "hash")
+        self.assertEqual(result.relationship, "unverified")
         self.assertEqual(result.contents, raw)
 
     def test_low_side_never_reads_a_three_gib_download(self):
         attrs = {**self.facts(), "registry.stage": "fetch", "invokehttp.status.code": "200", "content_SHA-256": "a" * 64}
         result = self.run_flow("Low", attrs)
-        self.assertEqual(result.relationship, "hash")
+        self.assertEqual(result.relationship, "unverified")
         self.assertIsNone(result.contents)
         self.assertEqual(result.attributes["registry.auth.header"], "")
         attrs.update(result.attributes)
         result = self.run_flow("Low", attrs)
-        self.assertEqual(result.relationship, "ready")
+        self.assertEqual(result.relationship, "complete")
         self.assertIsNone(result.contents)
 
     def test_wrong_digest_or_size_preserves_the_content_for_hold(self):
@@ -131,12 +131,12 @@ class TransferController(unittest.TestCase):
     def test_high_side_dedupes_without_reading_content(self):
         self.registry.status = 200
         result = self.run_flow("High", self.facts())
-        self.assertEqual(result.relationship, "ready")
+        self.assertEqual(result.relationship, "complete")
         self.assertIsNone(result.contents)
 
     def test_upload_uses_post_then_native_put_and_keeps_the_location_query(self):
         result = self.run_flow("High", self.facts(), **{"Target Repository": "target/app"})
-        self.assertEqual(result.relationship, "http")
+        self.assertEqual(result.relationship, "prepared")
         self.assertEqual(result.attributes["registry.http.method"], "PUT")
         self.assertIn("?_state=opaque&digest=sha256%3A", result.attributes["registry.http.url"])
         self.assertEqual(self.registry.calls[0][0], "target/app")
@@ -145,7 +145,7 @@ class TransferController(unittest.TestCase):
     def test_foreign_upload_location_never_receives_credentials(self):
         self.registry.foreign = True
         result = self.run_flow("High", self.facts())
-        self.assertEqual(result.relationship, "retry")
+        self.assertEqual(result.relationship, "retryable")
         self.assertNotIn("registry.http.url", result.attributes)
         self.assertEqual(result.attributes["registry.auth.header"], "")
         self.assertIn(("warn", "retrying: upload Location names a foreign host"), self.processor.logger.lines)
@@ -155,12 +155,12 @@ class TransferController(unittest.TestCase):
         for side in ("Low", "High"):
             with self.subTest(side=side):
                 result = self.run_flow(side, self.facts())
-                self.assertEqual(result.relationship, "http")
+                self.assertEqual(result.relationship, "prepared")
                 self.assertEqual(result.attributes["registry.auth.header"], "")
                 self.assertNotIn("permanent-secret", json.dumps(result.attributes))
 
     def test_http_retries_refresh_auth_but_permanent_refusals_hold(self):
-        for status, expected in [(0, "retry"), (401, "retry"), (429, "retry"), (503, "retry"), (400, "failure"), (202, "failure")]:
+        for status, expected in [(0, "retryable"), (401, "retryable"), (429, "retryable"), (503, "retryable"), (400, "failure"), (202, "failure")]:
             with self.subTest(status=status):
                 result = self.run_flow("High", {**self.facts(), "registry.stage": "upload", "invokehttp.status.code": str(status)})
                 self.assertEqual(result.relationship, expected)
@@ -168,7 +168,7 @@ class TransferController(unittest.TestCase):
 
     def test_missing_dependencies_report_human_fields_and_retry_without_content_reads(self):
         result = self.run_flow("High", self.facts(kind="manifest", needs=json.dumps([DIGEST, DIGEST])))
-        self.assertEqual(result.relationship, "retry")
+        self.assertEqual(result.relationship, "waiting")
         self.assertEqual(result.attributes["registry.retry.max"], "1000000")
         self.assertEqual(self.processor.logger.lines, [])  # waiting is normal: no warning until stale
         self.assertIn("team/app:latest (linux/amd64) incomplete: missing layers 1 of 1 and the config blob", result.attributes["registry.error"])
@@ -183,7 +183,7 @@ class TransferController(unittest.TestCase):
         self.registry.calls.clear()
         with patch("RouteRegistryTransfer.time.time", return_value=1020.0):
             early = self.run_flow("High", waiting)
-        self.assertEqual(early.relationship, "retry")
+        self.assertEqual(early.relationship, "waiting")
         self.assertEqual(self.registry.calls, [])  # not due: no request at all
         nexts = []
         for check, now in enumerate([1030.0, 2000.0, 9000.0, 20000.0, 40000.0, 60000.0], start=2):
@@ -206,7 +206,7 @@ class TransferController(unittest.TestCase):
         self.assertIn("moved to stale", self.processor.logger.lines[0][1])
         with patch("RouteRegistryTransfer.time.time", return_value=2 * 3600.0 - 1):
             result = self.run_flow("High", manifest, **{"Stale After Hours": "2"})
-        self.assertEqual(result.relationship, "retry")
+        self.assertEqual(result.relationship, "waiting")
 
     def test_manifest_is_committed_by_digest_before_its_tag(self):
         self.registry.status = 200
@@ -218,7 +218,7 @@ class TransferController(unittest.TestCase):
         self.assertEqual(result.attributes["registry.http.url"], "https://registry.test/v2/team/app/manifests/latest")
         attrs.update(result.attributes)
         attrs.update({"invokehttp.status.code": "201", "resp.docker-content-digest": DIGEST})
-        self.assertEqual(self.run_flow("High", attrs).relationship, "ready")
+        self.assertEqual(self.run_flow("High", attrs).relationship, "complete")
 
     def test_a_changed_manifest_is_never_tagged(self):
         attrs = {**self.facts(kind="manifest"), "registry.stage": "manifest-digest", "invokehttp.status.code": "201",
@@ -228,13 +228,13 @@ class TransferController(unittest.TestCase):
     def test_malformed_metadata_does_not_start_an_http_request(self):
         for change in [{"digest": "bad"}, {"repository": "../admin"}, {"size": "-1"}, {"kind": "other"}]:
             result = self.run_flow("High", self.facts(**change))
-            self.assertNotEqual(result.relationship, "http")
+            self.assertNotEqual(result.relationship, "prepared")
         self.assertEqual(self.registry.calls, [])
 
     def test_metadata_network_failure_is_a_bounded_retry(self):
         self.registry.blob_exists = lambda *args: (_ for _ in ()).throw(RegistryError("network unavailable"))
         result = self.run_flow("Low", self.facts())
-        self.assertEqual(result.relationship, "retry")
+        self.assertEqual(result.relationship, "retryable")
         self.assertEqual(result.attributes["registry.retry.max"], "3")
 
 
