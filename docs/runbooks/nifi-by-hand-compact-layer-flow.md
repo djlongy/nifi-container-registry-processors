@@ -226,6 +226,8 @@ Queue settings on **every** low connection. Everything else stays default (FlowF
 | Back Pressure Object Threshold | `20` |
 | Back Pressure Data Size Threshold | `20 GB` |
 
+Both connections of the retry loop, `retryable` from RouteTransfer to RetryTransfer and `retry` back, keep Back Pressure Object Threshold at NiFi's default `10000`. NiFi does not run a processor while any of its outgoing connections is full, so with a low limit on both sides of a loop each processor waits on the other and the loop stops for good once both fill.
+
 `20 GB` is a tested example, not a disk reservation. Choose a size larger than your largest blob, and size the content repository for concurrent claims, retries and archival retention. The live test used 40 GiB content volumes on each node. The port connection uses no named relationship.
 
 | # | Source | Selected relationships | Destination | Connection name |
@@ -576,6 +578,8 @@ Queue settings on **every** high connection except `stale`. Everything else stay
 |---|---|
 | Back Pressure Object Threshold | `20` |
 | Back Pressure Data Size Threshold | `20 GB` |
+
+Both connections of the retry loop, `retryable, waiting` from RouteTransfer to RetryTransfer and `retry` back, keep Back Pressure Object Threshold at NiFi's default `10000`. NiFi does not run a processor while any of its outgoing connections is full, so with a low limit on both sides of a loop each processor waits on the other and the loop stops for good once both fill.
 
 On the `stale` connection leave Back Pressure Object Threshold at NiFi's default `10000` and set only Back Pressure Data Size Threshold `20 GB`: stale manifests are a few KB each and must never stop RouteTransfer. `20 GB` is a tested example, not a disk reservation. Choose a size larger than your largest blob and size the content repository for concurrent claims, retries and archival retention. The live test used 40 GiB content volumes on each node.
 
