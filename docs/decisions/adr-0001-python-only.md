@@ -11,7 +11,7 @@ Claims about NiFi behaviour here are Unverified until tested.
 
 ## Context
 
-The repository started with Java processors packaged as a NAR. The same processors were then written as NiFi Python processors (`python/container_registry/`).
+The repository started with Java processors packaged as a NAR. The same processors were then written as NiFi Python processors (`python/container-registry/`).
 
 ## Options
 

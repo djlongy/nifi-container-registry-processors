@@ -1,8 +1,8 @@
 # The Python processors as an image, for an init container that copies them
 # into NiFi's Python extensions directory before NiFi starts:
-#   cp -r /extensions/container_registry <python extensions directory>/
+#   cp -r /extensions/container-registry <python extensions directory>/
 # BASE_IMAGE needs only sh and cp; point it at your own mirror with --build-arg.
 ARG BASE_IMAGE=docker.io/library/busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
 FROM ${BASE_IMAGE}
-COPY container_registry/*.py container_registry/README.md /extensions/container_registry/
+COPY container-registry/*.py container-registry/README.md /extensions/container-registry/
 USER 1000:1000
