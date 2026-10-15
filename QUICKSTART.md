@@ -13,7 +13,7 @@ git clone https://github.com/djlongy/nifi-container-registry-processors.git
 cp -r nifi-container-registry-processors/python/container-registry /opt/nifi/nifi-current/python_extensions/
 ```
 
-Use the directory `nifi.python.extensions.source.directory.default` names in `nifi.properties` if it is not `./python_extensions`. Within a minute `PullContainerImages`, `ExportContainerImages` and `PushContainerImages` 1.5.0 appear in **Add Processor** (filter on `container`). Nothing is installed from PyPI.
+Use the directory `nifi.python.extensions.source.directory.default` names in `nifi.properties` if it is not `./python_extensions`. Within a minute `PullContainerImages`, `ExportContainerImages` and `PushContainerImages` 1.5.2 appear in **Add Processor** (filter on `container`). Nothing is installed from PyPI.
 
 ## 2. Trust the registry CA (SSL Context Service)
 

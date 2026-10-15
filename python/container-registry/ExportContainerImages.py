@@ -32,7 +32,7 @@ class ExportContainerImages(FlowFileTransform):
         implements = ["org.apache.nifi.python.processor.FlowFileTransform"]
 
     class ProcessorDetails:
-        version = "1.5.0"
+        version = "1.5.2"
         description = ("Exports the images a gitlab-registry-mirror webhook names as one mirror.py export tar in Tar Output "
                        "Directory, on this node's local disk. The body only selects images: it must match the X-Sha256 "
                        "attribute, name the host of Source Registry URL and repositories in Allowed Repositories, and every "

@@ -34,7 +34,7 @@ class RouteRegistryTransfer(FlowFileTransform):
         implements = ["org.apache.nifi.python.processor.FlowFileTransform"]
 
     class ProcessorDetails:
-        version = "1.5.1"
+        version = "1.5.2"
         description = "Prepare registry jobs and route native downloads/uploads, retries and failures. Never reads blob content."
         tags = ["registry", "container", "streaming", "diode"]
 

@@ -103,7 +103,7 @@ class PullContainerImages(FlowFileSource):
         implements = ["org.apache.nifi.python.processor.FlowFileSource"]
 
     class ProcessorDetails:
-        version = "1.5.0"
+        version = "1.5.2"
         description = ("Exports container images from a source registry as a mirror.py export tar written to Tar Output "
                        "Directory, and emits an empty FlowFile that names it, for FetchFile to read on the same node (or "
                        "shared storage). Each run exports what changed since the last export, recorded in cluster state. "

@@ -33,7 +33,7 @@ export.json            {"images": [{"dir": "000000", "source": "...", "target": 
 
 A change to this layout is a new major version.
 
-## Python processors 1.5.0
+## Python processors 1.5.2
 
 `python/container-registry/` holds PullContainerImages and PushContainerImages in Python, plus ExportContainerImages (details in its README). They need no build: copy the directory into the Python extensions directory of every node. To go from nothing to one pushed image, follow [QUICKSTART.md](QUICKSTART.md); for a click-by-click build of the webhook flow in the NiFi UI, see [docs/runbooks/nifi-by-hand.md](docs/runbooks/nifi-by-hand.md).
 
