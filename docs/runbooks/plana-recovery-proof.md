@@ -31,7 +31,7 @@ High rechecked the exact fixture manifest and emitted this real warning while re
 
 [![Actual missing-layer bulletin](../images/plana-missing-layer-bulletin.jpg)](../images/plana-missing-layer-bulletin.jpg)
 
-The low stopped GenerateFlowFile had image reference, `registry.layers=2`, `registry.check=f6d01108`, `registry.platform=linux/amd64`, Primary node execution and batch size 1. Run once created exactly **one request**. Low fetched the 337-byte config and the 262,414-byte missing layer; it did not fetch layer 1 for this replay. High uploaded layer 2, skipped the existing config, and then committed the retained manifest by digest and tag. High HEAD/GET became 200, the downloaded blob hash/size matched, and both work/failure canvases drained.
+(A GenerateFlowFile starts with none of the webhook's attributes; the dynamic properties it needs, and nothing else, are listed in [the input contract](../reference/contract.md#standing-in-for-the-webhook-with-generateflowfile).) The low stopped GenerateFlowFile had image reference, `registry.layers=2`, `registry.check=f6d01108`, `registry.platform=linux/amd64`, Primary node execution and batch size 1. Run once created exactly **one request**. Low fetched the 337-byte config and the 262,414-byte missing layer; it did not fetch layer 1 for this replay. High uploaded layer 2, skipped the existing config, and then committed the retained manifest by digest and tag. High HEAD/GET became 200, the downloaded blob hash/size matched, and both work/failure canvases drained.
 
 ## Whole-image replay
 
