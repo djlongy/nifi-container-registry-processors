@@ -41,7 +41,7 @@ How it works: a webhook (or the optional `ResendImage` card) delivers a small JS
 
 ### Low screenshot
 
-Actual screenshot of the running, empty-queue `ImageTransferLowSide` canvas on 2026-10-15. Click it to open it at full size. Connection labels are the queue names. Statistics in the top toolbar describe the whole NiFi cluster, not only the image transfer.
+Actual screenshot of the running, empty-queue `ImageTransferLowSide` canvas on 2026-10-15. Click it to open it at full size. Connection labels show the selected relationships. Statistics in the top toolbar describe the whole NiFi cluster, not only the image transfer.
 
 [![Image transfer low-side canvas](../images/image-transfer-low-side.jpg)](../images/image-transfer-low-side.jpg)
 
@@ -227,7 +227,7 @@ The card stands in for the webhook, so it carries the webhook's `X-*` attributes
 
 ### L5. Connections and queue settings
 
-Drag from a source card's handle to its destination, choose the exact relationships in **Details**, and set the connection name to the value shown. A row with several relationships is **one connection** with all of them selected.
+Drag from a source card's handle to its destination and choose the exact relationships in **Details**. Leave the connection name blank: the canvas shows the selected relationships. A row with several relationships is **one connection** with all of them selected.
 
 Queue settings on every low connection that is not part of a loop. Everything else stays default (FlowFile Expiration `0 sec`, no prioritizer, no load balancing):
 
@@ -240,25 +240,25 @@ Every connection that sits on a directed loop keeps Back Pressure Object Thresho
 
 `20 GB` is a tested example, not a disk reservation. Choose a size larger than your largest blob, and size the content repository for concurrent claims, retries and archival retention. The live test used 40 GiB content volumes on each node. The port connection uses no named relationship.
 
-| # | Source | Selected relationships | Destination | Connection name |
-|---|---|---|---|---|
-| L1 | ReceiveWebhook | `success` | PlanTransfer | `success` |
-| L2 | PlanTransfer | `success` | SplitJobs | `success` |
-| L3 | PlanTransfer | `failure` | Hold | `failure` |
-| L4 | SplitJobs | `split` | RouteTransfer | `split` |
-| L5 | SplitJobs | `failure` | Hold | `failure` |
-| L6 | RouteTransfer | `prepared` | FetchBlob | `prepared` |
-| L7 | RouteTransfer | `unverified` | HashContent | `unverified` |
-| L8 | RouteTransfer | `complete` | ToDiode | `complete` |
-| L9 | RouteTransfer | `retryable` | RetryTransfer | `retryable` |
-| L10 | RouteTransfer | `failure` | Hold | `failure` |
-| L11 | FetchBlob | `Response` | RouteTransfer | `Response` |
-| L12 | FetchBlob | `Failure`, `No Retry`, `Retry` | RouteTransfer | `Failure, No Retry, Retry` |
-| L13 | HashContent | `success` | RouteTransfer | `success` |
-| L14 | HashContent | `failure` | Hold | `failure` |
-| L15 | RetryTransfer | `retry` | RouteTransfer | `retry` |
-| L16 | RetryTransfer | `retries_exceeded`, `failure` | Hold | `failure, retries_exceeded` |
-| L17 (optional) | ResendImage | `success` | PlanTransfer | `success` |
+| # | Source | Selected relationships | Destination |
+|---|---|---|---|
+| L1 | ReceiveWebhook | `success` | PlanTransfer |
+| L2 | PlanTransfer | `success` | SplitJobs |
+| L3 | PlanTransfer | `failure` | Hold |
+| L4 | SplitJobs | `split` | RouteTransfer |
+| L5 | SplitJobs | `failure` | Hold |
+| L6 | RouteTransfer | `prepared` | FetchBlob |
+| L7 | RouteTransfer | `unverified` | HashContent |
+| L8 | RouteTransfer | `complete` | ToDiode |
+| L9 | RouteTransfer | `retryable` | RetryTransfer |
+| L10 | RouteTransfer | `failure` | Hold |
+| L11 | FetchBlob | `Response` | RouteTransfer |
+| L12 | FetchBlob | `Failure`, `No Retry`, `Retry` | RouteTransfer |
+| L13 | HashContent | `success` | RouteTransfer |
+| L14 | HashContent | `failure` | Hold |
+| L15 | RetryTransfer | `retry` | RouteTransfer |
+| L16 | RetryTransfer | `retries_exceeded`, `failure` | Hold |
+| L17 (optional) | ResendImage | `success` | PlanTransfer |
 
 Capitalization is deliberate: InvokeHTTP uses capitalized relationship names, while the Python processors and RetryFlowFile use lower case. The FetchBlob `Response` connection goes back to RouteTransfer **before HashContent**, so the source `Authorization` value is cleared before the diode. That clears the current attribute value; it cannot erase earlier provenance records.
 
@@ -448,7 +448,7 @@ How it works: the diode delivers one FlowFile per blob or manifest into `FromDio
 
 ### High screenshot
 
-Actual screenshot of the running `ImageTransferHighSide` canvas. Click it to open it at full size. Connection labels are the queue names. The toolbar statistics describe the whole NiFi cluster.
+Actual screenshot of the running `ImageTransferHighSide` canvas. Click it to open it at full size. Connection labels show the selected relationships. The toolbar statistics describe the whole NiFi cluster.
 
 [![Image transfer high-side canvas](../images/image-transfer-high-side.jpg)](../images/image-transfer-high-side.jpg)
 
@@ -585,7 +585,7 @@ A queue the operator inspects before anything is discarded ends at a **disabled*
 
 ### H5. Connections and queue settings
 
-Drag from a source card's handle to its destination, choose the exact relationships in **Details**, and set the connection name to the value shown. A row with several relationships is **one connection** with all of them selected.
+Drag from a source card's handle to its destination and choose the exact relationships in **Details**. Leave the connection name blank: the canvas shows the selected relationships. A row with several relationships is **one connection** with all of them selected.
 
 Queue settings on every high connection that is not part of a loop and is not `stale`. Everything else stays default (FlowFile Expiration `0 sec`, no prioritizer, no load balancing):
 
@@ -598,16 +598,18 @@ Every connection that sits on a directed loop keeps Back Pressure Object Thresho
 
 On the `stale` connection leave Back Pressure Object Threshold at NiFi's default `10000` and set only Back Pressure Data Size Threshold `20 GB`: stale manifests are a few KB each and must never stop RouteTransfer. `20 GB` is a tested example, not a disk reservation. Choose a size larger than your largest blob and size the content repository for concurrent claims, retries and archival retention. The live test used 40 GiB content volumes on each node.
 
-| # | Source | Selected relationships | Destination | Connection name |
-|---|---|---|---|---|
-| H1 | FromDiode | None (port) | RouteTransfer | `FromDiode` |
-| H2 | RouteTransfer | `prepared` | UploadContent | `prepared` |
-| H3 | RouteTransfer | `retryable`, `waiting` | RetryTransfer | `retryable, waiting` |
-| H4 | RouteTransfer | `failure`, `unverified` | Hold | `failure, unverified` |
-| H5 | RouteTransfer | `stale` | StaleImages | `stale` |
-| H6 | UploadContent | `Original`, `No Retry`, `Retry`, `Failure` | RouteTransfer | `Failure, No Retry, Original, Retry` |
-| H7 | RetryTransfer | `retry` | RouteTransfer | `retry` |
-| H8 | RetryTransfer | `retries_exceeded`, `failure` | Hold | `failure, retries_exceeded` |
+| # | Source | Selected relationships | Destination |
+|---|---|---|---|
+| H1 | FromDiode | None (port) | RouteTransfer |
+| H2 | RouteTransfer | `prepared` | UploadContent |
+| H3 | RouteTransfer | `retryable`, `waiting` | RetryTransfer |
+| H4 | RouteTransfer | `failure`, `unverified` | Hold |
+| H5 | RouteTransfer | `stale` | StaleImages |
+| H6 | UploadContent | `Original`, `No Retry`, `Retry`, `Failure` | RouteTransfer |
+| H7 | RetryTransfer | `retry` | RouteTransfer |
+| H8 | RetryTransfer | `retries_exceeded`, `failure` | Hold |
+
+The H1 connection from the `FromDiode` port has no relationship to show, so name it `FromDiode`.
 
 Capitalization is deliberate: InvokeHTTP uses capitalized relationship names, while the Python processors and RetryFlowFile use lower case. `unverified` goes to Hold on purpose: the high controller never asks for content to be hashed, so a FlowFile arriving there is a fault to inspect.
 
