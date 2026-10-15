@@ -37,11 +37,11 @@ The low side needs **PlanRegistryTransfer** and **RouteRegistryTransfer**. The h
 
 The low side reads the source registry. It is built on the low NiFi instance, inside a process group named `ImageTransferLowSide`.
 
-How it works: a webhook (or the optional `ResendImage` card) delivers a small JSON request. `PlanTransfer` resolves the image into jobs, `SplitJobs` makes one FlowFile per job, and `RouteTransfer` prepares each registry request. `FetchBlob` downloads the bytes, `HashContent` checks them, and `RouteTransfer` releases the verified FlowFile to `ToDiode`.
+How it works: a webhook (or the optional `GenerateFlowFile` card) delivers a small JSON request. `PlanRegistryTransfer` resolves the image into jobs, `SplitJson` makes one FlowFile per job, and `RouteRegistryTransfer` prepares each registry request. `InvokeHTTP` downloads the bytes, `CryptographicHashContent` checks them, and `RouteRegistryTransfer` releases the verified FlowFile to `ToDiode`.
 
 ### Low screenshot
 
-Actual screenshot of the running, empty-queue `ImageTransferLowSide` canvas on 2026-10-15. Click it to open it at full size. Connection labels show the selected relationships. Statistics in the top toolbar describe the whole NiFi cluster, not only the image transfer.
+Actual screenshot of the running, empty-queue `ImageTransferLowSide` canvas on 2026-10-15. Click it to open it at full size. Connection labels show the selected relationships. The cards carry the suggested names, so the screenshot shows the renamed canvas (see [L12](#l12-rename-the-cards-optional)). Statistics in the top toolbar describe the whole NiFi cluster, not only the image transfer.
 
 [![Image transfer low-side canvas](../images/image-transfer-low-side.jpg)](../images/image-transfer-low-side.jpg)
 
@@ -75,42 +75,42 @@ keytool -importcert -noprompt -alias registry-ca -file /path/to/registry-ca.pem 
   -keystore /opt/nifi/certs/registry-trust.p12 -storetype PKCS12
 ```
 
-Let keytool prompt for the password and put that password in `truststore_password`. Import any intermediate CA with its own alias. Native **InvokeHTTP replaces its trust configuration when you select an SSL Context Service**, so the truststore must hold every CA needed for the registry chain. Never disable TLS verification. Select `RegistryTrust` on `PlanTransfer` and `RouteTransfer` for a private CA. `FetchBlob` trusts Java's default CAs while its SSL Context Service is empty, which is enough when the registry's certificate chains to one of them (the live low side leaves it empty); select `RegistryTrust` on it when the CA is outside that trust. With the service only on the Python processors, the controller's HEAD requests succeed but every `FetchBlob` request fails with `PKIX path building failed`. Registry mutual TLS (client certificates) is outside this tested flow.
+Let keytool prompt for the password and put that password in `truststore_password`. Import any intermediate CA with its own alias. Native **InvokeHTTP replaces its trust configuration when you select an SSL Context Service**, so the truststore must hold every CA needed for the registry chain. Never disable TLS verification. Select `RegistryTrust` on `PlanRegistryTransfer` and `RouteRegistryTransfer` for a private CA. `InvokeHTTP` trusts Java's default CAs while its SSL Context Service is empty, which is enough when the registry's certificate chains to one of them (the live low side leaves it empty); select `RegistryTrust` on it when the CA is outside that trust. With the service only on the Python processors, the controller's HEAD requests succeed but every `InvokeHTTP` request fails with `PKIX path building failed`. Registry mutual TLS (client certificates) is outside this tested flow.
 
 ### L2. Add the cards
 
-Use **Add Processor**, search for the type, pick the exact version, then **Configure, Settings, Name**. Add the output port `ToDiode` with the toolbar **Output Port** control.
+Use **Add Processor**, search for the type, pick the exact version and keep NiFi's default name, which is the type. Renaming the cards is the last, optional step ([L12](#l12-rename-the-cards-optional)). Add the output port with the toolbar **Output Port** control and name it `ToDiode`.
 
-| Display name | Type | Version | Initial state |
-|---|---|---|---|
-| ReceiveWebhook | ListenHTTP | 2.12.0 | Stopped while configuring |
-| PlanTransfer | PlanRegistryTransfer | 1.5.1 | Stopped while configuring |
-| SplitJobs | SplitJson | 2.12.0 | Stopped while configuring |
-| RouteTransfer | RouteRegistryTransfer | 1.5.1 | Stopped while configuring |
-| FetchBlob | InvokeHTTP | 2.12.0 | Stopped while configuring |
-| HashContent | CryptographicHashContent | 2.12.0 | Stopped while configuring |
-| RetryTransfer | RetryFlowFile | 2.12.0 | Stopped while configuring |
-| Hold | LogMessage | 2.12.0 | **Disabled** |
-| ResendImage (optional recovery) | GenerateFlowFile | 2.12.0 | Stopped (never Start it) |
+| Type | Version | Initial state |
+|---|---|---|
+| ListenHTTP | 2.12.0 | Stopped while configuring |
+| PlanRegistryTransfer | 1.5.1 | Stopped while configuring |
+| SplitJson | 2.12.0 | Stopped while configuring |
+| RouteRegistryTransfer | 1.5.1 | Stopped while configuring |
+| InvokeHTTP | 2.12.0 | Stopped while configuring |
+| CryptographicHashContent | 2.12.0 | Stopped while configuring |
+| RetryFlowFile | 2.12.0 | Stopped while configuring |
+| LogMessage | 2.12.0 | **Disabled** |
+| GenerateFlowFile (optional recovery) | 2.12.0 | Stopped (never Start it) |
 
-**Hold is a parking destination, not a processor you run.** After configuring it, right-click it and choose **Disable**. Its `success` relationship is auto-terminated only so its configuration is valid. **Starting Hold would consume and discard held failures.** Read [L11](#l11-recover-a-held-or-incomplete-transfer) before changing its state.
+**LogMessage is a parking destination, not a processor you run.** After configuring it, right-click it and choose **Disable**. Its `success` relationship is auto-terminated only so its configuration is valid. **Starting LogMessage would consume and discard held failures.** Read [L11](#l11-recover-a-held-or-incomplete-transfer) before changing its state.
 
 ### L3. Settings and scheduling changed from default
 
-Everything not listed here stays at NiFi's default: Scheduling Strategy `Timer driven`, Run Schedule `0 sec` (`1 min` on ResendImage, which is GenerateFlowFile's own default; use **Run Once**, never Start), Concurrent Tasks `1`, Execution `All nodes`, Penalty Duration `30 sec`, Yield Duration `1 sec`, Bulletin Level `WARN`, no automatic relationship retries.
+Everything not listed here stays at NiFi's default: Scheduling Strategy `Timer driven`, Run Schedule `0 sec` (`1 min` on GenerateFlowFile, which is GenerateFlowFile's own default; use **Run Once**, never Start), Concurrent Tasks `1`, Execution `All nodes`, Penalty Duration `30 sec`, Yield Duration `1 sec`, Bulletin Level `WARN`, no automatic relationship retries.
 
 | Card | Tab, setting | Value |
 |---|---|---|
-| PlanTransfer | Scheduling, Run Duration | `25 ms` |
-| RouteTransfer | Scheduling, Run Duration | `25 ms` |
-| Hold | Scheduling, Run Duration | `25 ms` |
-| ResendImage | Scheduling, Execution | `Primary node` |
+| PlanRegistryTransfer | Scheduling, Run Duration | `25 ms` |
+| RouteRegistryTransfer | Scheduling, Run Duration | `25 ms` |
+| LogMessage | Scheduling, Run Duration | `25 ms` |
+| GenerateFlowFile | Scheduling, Execution | `Primary node` |
 
 ### L4. Enter the properties
 
 Open **Configure, Properties** on each card. Each table lists only the properties you change. A required property with no default is listed even if you might expect a default. Count of changed properties is shown in each heading.
 
-#### ReceiveWebhook (ListenHTTP): 5 properties
+#### ListenHTTP: 5 properties
 
 | Property | Value |
 |---|---|
@@ -122,7 +122,7 @@ Open **Configure, Properties** on each card. Each table lists only the propertie
 
 (In the NiFi UI type a single `|` between the alternatives, not `\|`.) ListenHTTP listens on plain HTTP internally in this example. Terminate HTTPS at a trusted ingress or reverse proxy and restrict the sender. **Client Authentication and the DN patterns do not authenticate plain-HTTP requests.** The webhook JSON is metadata, not image bytes. Enforce a JSON request-body cap at the ingress (example `1m`); the `Multipart Request Max Size` property covers multipart requests only.
 
-#### PlanTransfer (PlanRegistryTransfer): 7 properties
+#### PlanRegistryTransfer: 7 properties
 
 | Property | Value |
 |---|---|
@@ -134,9 +134,9 @@ Open **Configure, Properties** on each card. Each table lists only the propertie
 | Platform Selection | `#{platforms}` |
 | Request Timeout | `120` |
 
-`Request Timeout` is an integer number of **seconds**, not a NiFi duration. PlanTransfer validates the checksum, registry, image syntax and allowlist, resolves immutable manifests and emits upfront job facts.
+`Request Timeout` is an integer number of **seconds**, not a NiFi duration. PlanRegistryTransfer validates the checksum, registry, image syntax and allowlist, resolves immutable manifests and emits upfront job facts.
 
-#### SplitJobs (SplitJson): 1 property
+#### SplitJson: 1 property
 
 | Property | Value |
 |---|---|
@@ -144,7 +144,7 @@ Open **Configure, Properties** on each card. Each table lists only the propertie
 
 This splits the small job JSON, never a downloaded blob.
 
-#### RouteTransfer (RouteRegistryTransfer): 4 properties
+#### RouteRegistryTransfer: 4 properties
 
 | Property | Value |
 |---|---|
@@ -153,18 +153,18 @@ This splits the small job JSON, never a downloaded blob.
 | Registry Password | `#{src_password}` |
 | SSL Context Service | `RegistryTrust` (private CA only; otherwise leave unset) |
 
-`Transfer Side` stays at its default `Low`. Target Repository stays unset. RouteTransfer handles scoped registry authentication and metadata HEAD requests. Its relationships name the condition of the FlowFile when it leaves:
+`Transfer Side` stays at its default `Low`. Target Repository stays unset. RouteRegistryTransfer handles scoped registry authentication and metadata HEAD requests. Its relationships name the condition of the FlowFile when it leaves:
 
 | Relationship | Condition | Goes to |
 |---|---|---|
-| `prepared` | A registry request is prepared in the `registry.http.*` attributes | FetchBlob |
-| `unverified` | Downloaded bytes whose digest is not checked yet | HashContent |
-| `complete` | Checked bytes, ready for the diode | ToDiode |
-| `retryable` | A transient error that can be retried | RetryTransfer |
-| `failure` | A permanent condition, content kept (also used if the processor raises) | Hold |
+| `prepared` | A registry request is prepared in the `registry.http.*` attributes | InvokeHTTP |
+| `unverified` | Downloaded bytes whose digest is not checked yet | CryptographicHashContent |
+| `complete` | Checked bytes, ready for the diode | Output Port `ToDiode` |
+| `retryable` | A transient error that can be retried | RetryFlowFile |
+| `failure` | A permanent condition, content kept (also used if the processor raises) | LogMessage |
 | `waiting`, `stale` | Used on the high side only | Auto-terminate |
 
-#### FetchBlob (InvokeHTTP): 11 properties
+#### InvokeHTTP: 11 properties
 
 Add `Authorization` with **Properties, +** as a **dynamic property**. It is an HTTP header, not Request Username/Password and not the OAuth2 provider.
 
@@ -184,20 +184,20 @@ Add `Authorization` with **Properties, +** as a **dynamic property**. It is an H
 
 Add **SSL Context Service** = `RegistryTrust` only when the registry's CA is outside Java's default trust (a 12th property; the live low side leaves it empty). Leave Request Username, Request Password, the OAuth2 provider and Request Header Attributes Pattern unset: forwarding every attribute could leak tokens. Leave Response Body Attribute Name unset so image bytes are never copied into an attribute. Leave redirects disabled so credentials are never sent to an unexpected host. For a Bearer registry (Quay, GitLab, Harbor) the controller supplies a scoped Bearer token in `registry.auth.header`.
 
-#### HashContent (CryptographicHashContent): 0 properties
+#### CryptographicHashContent: 0 properties
 
-All properties stay at their defaults (Hash Algorithm `SHA-256`, Fail When Content Empty `false`). HashContent writes `content_SHA-256`; RouteTransfer compares it, and the FlowFile size, with the planned digest and size before release.
+All properties stay at their defaults (Hash Algorithm `SHA-256`, Fail When Content Empty `false`). CryptographicHashContent writes `content_SHA-256`; RouteRegistryTransfer compares it, and the FlowFile size, with the planned digest and size before release.
 
-#### RetryTransfer (RetryFlowFile): 2 properties
+#### RetryFlowFile: 2 properties
 
 | Property | Value |
 |---|---|
 | Retry Attribute | `registry.retries` |
 | Maximum Retries | `${registry.retry.max}` |
 
-RouteTransfer sets `registry.retry.max` to the current `registry.retries` plus `3` for transient HTTP errors, so they reach Hold after about 1.5 minutes. It sets `registry.retries` back to `0` and blanks `registry.retries.uuid` after every successful step and when a FlowFile completes, so Reuse Mode `fail` does not reject a FlowFile the high card receives after a retry here. Exhausted or malformed retries go to Hold.
+RouteRegistryTransfer sets `registry.retry.max` to the current `registry.retries` plus `3` for transient HTTP errors, so they reach LogMessage after about 1.5 minutes. It sets `registry.retries` back to `0` and blanks `registry.retries.uuid` after every successful step and when a FlowFile completes, so Reuse Mode `fail` does not reject a FlowFile the high card receives after a retry here. Exhausted or malformed retries go to LogMessage.
 
-#### Hold (LogMessage): 3 properties
+#### LogMessage: 3 properties
 
 | Property | Value |
 |---|---|
@@ -207,7 +207,7 @@ RouteTransfer sets `registry.retry.max` to the current `registry.retries` plus `
 
 A queue the operator inspects before anything is discarded ends at a **disabled** LogMessage: FlowFiles wait in its input queue with their content and attributes. Enabling it would log each one at WARN and discard it, so the log records every discard. Do not add dynamic attributes.
 
-#### ResendImage (GenerateFlowFile, optional): 11 properties
+#### GenerateFlowFile (optional): 11 properties
 
 The card stands in for the webhook, so it carries the webhook's `X-*` attributes as dynamic properties. [L11](#l11-recover-a-held-or-incomplete-transfer) explains each one and how to compute `X-Sha256`.
 
@@ -236,31 +236,31 @@ Queue settings on every low connection that is not part of a loop. Everything el
 | Back Pressure Object Threshold | `20` |
 | Back Pressure Data Size Threshold | `20 GB` |
 
-Every connection that sits on a directed loop keeps Back Pressure Object Threshold at NiFi's default `10000`: `prepared`, `unverified`, `retryable`, `Response`, `Failure, No Retry, Retry`, `success` from HashContent and `retry` (RouteTransfer sends to FetchBlob, HashContent and RetryTransfer, and each sends back to RouteTransfer). NiFi does not run a processor while any of its outgoing connections is full, so with a low limit on both sides of a loop each processor waits on the other and the loop stops for good once both fill. Set only Back Pressure Data Size Threshold `20 GB` on those connections.
+Every connection that sits on a directed loop keeps Back Pressure Object Threshold at NiFi's default `10000`: `prepared`, `unverified`, `retryable`, `Response`, `Failure, No Retry, Retry`, `success` from CryptographicHashContent and `retry` (RouteRegistryTransfer sends to InvokeHTTP, CryptographicHashContent and RetryFlowFile, and each sends back to RouteRegistryTransfer). NiFi does not run a processor while any of its outgoing connections is full, so with a low limit on both sides of a loop each processor waits on the other and the loop stops for good once both fill. Set only Back Pressure Data Size Threshold `20 GB` on those connections.
 
 `20 GB` is a tested example, not a disk reservation. Choose a size larger than your largest blob, and size the content repository for concurrent claims, retries and archival retention. The live test used 40 GiB content volumes on each node. The port connection uses no named relationship.
 
 | # | Source | Selected relationships | Destination |
 |---|---|---|---|
-| L1 | ReceiveWebhook | `success` | PlanTransfer |
-| L2 | PlanTransfer | `success` | SplitJobs |
-| L3 | PlanTransfer | `failure` | Hold |
-| L4 | SplitJobs | `split` | RouteTransfer |
-| L5 | SplitJobs | `failure` | Hold |
-| L6 | RouteTransfer | `prepared` | FetchBlob |
-| L7 | RouteTransfer | `unverified` | HashContent |
-| L8 | RouteTransfer | `complete` | ToDiode |
-| L9 | RouteTransfer | `retryable` | RetryTransfer |
-| L10 | RouteTransfer | `failure` | Hold |
-| L11 | FetchBlob | `Response` | RouteTransfer |
-| L12 | FetchBlob | `Failure`, `No Retry`, `Retry` | RouteTransfer |
-| L13 | HashContent | `success` | RouteTransfer |
-| L14 | HashContent | `failure` | Hold |
-| L15 | RetryTransfer | `retry` | RouteTransfer |
-| L16 | RetryTransfer | `retries_exceeded`, `failure` | Hold |
-| L17 (optional) | ResendImage | `success` | PlanTransfer |
+| L1 | ListenHTTP | `success` | PlanRegistryTransfer |
+| L2 | PlanRegistryTransfer | `success` | SplitJson |
+| L3 | PlanRegistryTransfer | `failure` | LogMessage |
+| L4 | SplitJson | `split` | RouteRegistryTransfer |
+| L5 | SplitJson | `failure` | LogMessage |
+| L6 | RouteRegistryTransfer | `prepared` | InvokeHTTP |
+| L7 | RouteRegistryTransfer | `unverified` | CryptographicHashContent |
+| L8 | RouteRegistryTransfer | `complete` | Output Port `ToDiode` |
+| L9 | RouteRegistryTransfer | `retryable` | RetryFlowFile |
+| L10 | RouteRegistryTransfer | `failure` | LogMessage |
+| L11 | InvokeHTTP | `Response` | RouteRegistryTransfer |
+| L12 | InvokeHTTP | `Failure`, `No Retry`, `Retry` | RouteRegistryTransfer |
+| L13 | CryptographicHashContent | `success` | RouteRegistryTransfer |
+| L14 | CryptographicHashContent | `failure` | LogMessage |
+| L15 | RetryFlowFile | `retry` | RouteRegistryTransfer |
+| L16 | RetryFlowFile | `retries_exceeded`, `failure` | LogMessage |
+| L17 (optional) | GenerateFlowFile | `success` | PlanRegistryTransfer |
 
-Capitalization is deliberate: InvokeHTTP uses capitalized relationship names, while the Python processors and RetryFlowFile use lower case. The FetchBlob `Response` connection goes back to RouteTransfer **before HashContent**, so the source `Authorization` value is cleared before the diode. That clears the current attribute value; it cannot erase earlier provenance records.
+Capitalization is deliberate: InvokeHTTP uses capitalized relationship names, while the Python processors and RetryFlowFile use lower case. The InvokeHTTP `Response` connection goes back to RouteRegistryTransfer **before CryptographicHashContent**, so the source `Authorization` value is cleared before the diode. That clears the current attribute value; it cannot erase earlier provenance records.
 
 ### L6. Auto-termination
 
@@ -268,36 +268,36 @@ In each processor's **Configure, Settings, Automatically Terminate Relationships
 
 | Processor | Auto-terminate |
 |---|---|
-| ReceiveWebhook | None |
-| PlanTransfer | `original` |
-| SplitJobs | `original` |
-| RouteTransfer | `original`, `stale`, `waiting` |
-| FetchBlob | `Original` |
-| HashContent | None |
-| RetryTransfer | None |
-| Hold | `success` (processor stays disabled) |
-| ResendImage | None |
+| ListenHTTP | None |
+| PlanRegistryTransfer | `original` |
+| SplitJson | `original` |
+| RouteRegistryTransfer | `original`, `stale`, `waiting` |
+| InvokeHTTP | `Original` |
+| CryptographicHashContent | None |
+| RetryFlowFile | None |
+| LogMessage | `success` (processor stays disabled) |
+| GenerateFlowFile | None |
 
 No unconnected relationship may stay unterminated, or its processor stays invalid.
 
 ### L7. Layout
 
-Place the main route in one vertical column: webhook, planner, split, route. Put the download, retry and hash cards on the row below route, and Hold at the bottom. Drag approximately to these top-left canvas coordinates (not screen pixels) from the live canvas. Bends only affect readability; arrows and the wiring table determine behaviour.
+Place the main route in one vertical column: ListenHTTP, PlanRegistryTransfer, SplitJson, RouteRegistryTransfer. Put InvokeHTTP, RetryFlowFile and CryptographicHashContent on the row below RouteRegistryTransfer, and LogMessage at the bottom. Drag approximately to these top-left canvas coordinates (not screen pixels) from the live canvas. Bends only affect readability; arrows and the wiring table determine behaviour.
 
 | Card | X | Y |
 |---|---|---|
-| ReceiveWebhook | 0 | 0 |
-| ResendImage | 512 | 0 |
-| PlanTransfer | 0 | 240 |
-| SplitJobs | 0 | 480 |
-| RouteTransfer | 0 | 720 |
-| ToDiode | -712 | 960 |
-| FetchBlob | -256 | 960 |
-| RetryTransfer | 256 | 960 |
-| HashContent | 768 | 960 |
-| Hold | 0 | 1200 |
+| ListenHTTP | 0 | 0 |
+| GenerateFlowFile | 512 | 0 |
+| PlanRegistryTransfer | 0 | 240 |
+| SplitJson | 0 | 480 |
+| RouteRegistryTransfer | 0 | 720 |
+| Output Port `ToDiode` | -712 | 960 |
+| InvokeHTTP | -256 | 960 |
+| RetryFlowFile | 256 | 960 |
+| CryptographicHashContent | 768 | 960 |
+| LogMessage | 0 | 1200 |
 
-Keep the two connections from FetchBlob to RouteTransfer on separate paths with separate labels. The [low flow spec](../flows/compact-layer-low-mcp-spec.json) is a **NiFi MCP flow spec**, not a native NiFi UI import file. It omits credentials and trust services; bind your context, set trust if needed, and disable Hold before starting an imported flow. Automatic layout can replace manual bends.
+Keep the two connections from InvokeHTTP to RouteRegistryTransfer on separate paths with separate labels. The [low flow spec](../flows/compact-layer-low-mcp-spec.json) is a **NiFi MCP flow spec**, not a native NiFi UI import file, and it uses the suggested card names. It omits credentials and trust services; bind your context, set trust if needed, and disable LogMessage before starting an imported flow. Automatic layout can replace manual bends.
 
 ### L8. Send across the diode
 
@@ -346,34 +346,34 @@ with urllib.request.urlopen(request, timeout=30) as response:
 PYREQUEST
 ```
 
-Expected response: 202. The request holds registry and image facts and a checksum, **no registry credentials**. HTTP headers are case-insensitive on the wire; the checksum attribute PlanTransfer reads is `X-Sha256`. If your ingress changes attribute spelling, inspect the captured attributes and map the checksum to that exact name.
+Expected response: 202. The request holds registry and image facts and a checksum, **no registry credentials**. HTTP headers are case-insensitive on the wire; the checksum attribute PlanRegistryTransfer reads is `X-Sha256`. If your ingress changes attribute spelling, inspect the captured attributes and map the checksum to that exact name.
 
 ### L10. Start and verify the low side
 
-Start the high side first (see [H9](#h9-start-and-verify-the-high-side)). Then start every low card and `ToDiode`, keeping `Hold` **disabled** and `ResendImage` stopped. Check that every active processor validates on every node. Submit the small request and check:
+Start the high side first (see [H9](#h9-start-and-verify-the-high-side)). Then start every low card and `ToDiode`, keeping `LogMessage` **disabled** and `GenerateFlowFile` stopped. Check that every active processor validates on every node. Submit the small request and check:
 
 | Signal | Expected result |
 |---|---|
 | Listener or sync job | HTTP `202` |
-| PlanTransfer | One job list; SplitJobs then emits individual blob, config and manifest jobs |
-| FetchBlob and HashContent | Native streamed content with the planned digest and size |
+| PlanRegistryTransfer | One job list; SplitJson then emits individual blob, config and manifest jobs |
+| InvokeHTTP and CryptographicHashContent | Native streamed content with the planned digest and size |
 | ToDiode | Verified FlowFiles leave, one per blob and manifest |
-| Queues into Hold | Empty after success; any retained failure has `registry.error` |
+| Queues into LogMessage | Empty after success; any retained failure has `registry.error` |
 | Work queues | Drain to zero |
 
 ### L11. Recover a held or incomplete transfer
 
-Keep failed bytes in place while you read the bulletin and `registry.error`. Do not start Hold, empty its queues, or auto-terminate an extra error relationship to make the canvas green.
+Keep failed bytes in place while you read the bulletin and `registry.error`. Do not start LogMessage, empty its queues, or auto-terminate an extra error relationship to make the canvas green.
 
 | Symptom | Check or action |
 |---|---|
 | Port 9617 cannot bind | Stop the duplicate listener or choose another free port and update the service and ingress target |
 | Invalid sensitive parameter | The password parameter must be marked sensitive and bound to the group |
-| PKIX or certificate failure | Configure CA trust separately for the Python processors and for FetchBlob; a selected Java truststore replaces native defaults |
+| PKIX or certificate failure | Configure CA trust separately for the Python processors and for InvokeHTTP; a selected Java truststore replaces native defaults |
 | 401 or 403 | Check robot repository permissions and token; network retries do not repair missing permissions |
 | Checksum, registry or allowlist failure | Fix the request or context and send a corrected request; inspect the retained original |
-| Hash or size mismatch | Hold the bytes; resend from the trusted source rather than accepting the mismatch |
-| A `failure` queue into Hold shows 20 queued and the side stops | Back pressure: each Hold queue stops its source at 20 FlowFiles. Read `registry.error` on the held FlowFiles, fix the cause, then empty or replay the queue. Alert on any FlowFile in a Hold queue so it is seen at 1, not at 20 |
+| Hash or size mismatch | Keep the bytes; resend from the trusted source rather than accepting the mismatch |
+| A `failure` queue into LogMessage shows 20 queued and the side stops | Back pressure: each LogMessage queue stops its source at 20 FlowFiles. Read `registry.error` on the held FlowFiles, fix the cause, then empty or replay the queue. Alert on any FlowFile in a LogMessage queue so it is seen at 1, not at 20 |
 | Exhausted network retries | Fix registry or network trouble, then submit the same trusted request again; blobs already on the high side are deduplicated |
 | Stalled large blob | Check content disk, queue byte threshold, ingress and registry timeouts, and active InvokeHTTP tasks before raising concurrency |
 | The high side reports missing layers for an image | Resend the image or the named layers, below |
@@ -382,22 +382,22 @@ Keep failed bytes in place while you read the bulletin and `registry.error`. Do 
 
 If you do not want to work with layer numbers, **resend the entire image**. Low sends its config, layers and manifest or index; the high side skips blobs it already has and uploads the missing ones. This uses more diode bandwidth than selective recovery, but the operator enters only the repository and tag. It also sends a fresh manifest, so it works when the earlier high-side manifest already exhausted its retries. Keep the old held failure until you have verified the replacement.
 
-Use the optional `ResendImage` card configured above. It is wired to `PlanTransfer` by connection L17.
+Use the optional `GenerateFlowFile` card configured above. It is wired to `PlanRegistryTransfer` by connection L17.
 
-**A GenerateFlowFile starts with none of the webhook's attributes.** The real webhook from gitlab-registry-mirror sends its facts as HTTP headers, and ListenHTTP turns each one into an attribute. `ResendImage` bypasses the webhook, so its FlowFile has only `mime.type`, `filename`, `path` and `uuid` plus the dynamic properties you add. Anything downstream that routes on the webhook's `X-*` attributes (for example a RouteOnAttribute testing `${X-Artifact-Type:equals('container-images-request')}`) sends a FlowFile without them to `unmatched`. So the card carries **the full `X-*` set** of the real webhook, plus `registry.image.reference`. Add each as a dynamic property (**Properties, +**), one by one:
+**A GenerateFlowFile starts with none of the webhook's attributes.** The real webhook from gitlab-registry-mirror sends its facts as HTTP headers, and ListenHTTP turns each one into an attribute. `GenerateFlowFile` bypasses the webhook, so its FlowFile has only `mime.type`, `filename`, `path` and `uuid` plus the dynamic properties you add. Anything downstream that routes on the webhook's `X-*` attributes (for example a RouteOnAttribute testing `${X-Artifact-Type:equals('container-images-request')}`) sends a FlowFile without them to `unmatched`. So the card carries **the full `X-*` set** of the real webhook, plus `registry.image.reference`. Add each as a dynamic property (**Properties, +**), one by one:
 
 | Dynamic property | Example value | What it is for |
 |---|---|---|
-| `registry.image.reference` | `team/app:1.0` | The image to resend. PlanTransfer reads it and runs in reference mode. Without it PlanTransfer treats the content as a webhook body and fails the FlowFile with `X-Sha256 is missing or is not the sha256 of the body` |
+| `registry.image.reference` | `team/app:1.0` | The image to resend. PlanRegistryTransfer reads it and runs in reference mode. Without it PlanRegistryTransfer treats the content as a webhook body and fails the FlowFile with `X-Sha256 is missing or is not the sha256 of the body` |
 | `X-Artifact-Type` | `container-images-request` | The value a RouteOnAttribute matches to recognise a transfer request |
 | `X-Artifact-Format` | `json` | The format of the request body. Routing and display only |
-| `X-Sha256` | `44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a` | The sha256 of the content. PlanTransfer checks it only in webhook mode, but a route or a later step can test it. See below |
+| `X-Sha256` | `44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a` | The sha256 of the content. PlanRegistryTransfer checks it only in webhook mode, but a route or a later step can test it. See below |
 | `X-Registry` | `registry.example.com` | The source registry host. Routing and display only |
 | `X-Image-Count` | `1` | The number of images in the request. Routing and display only |
 | `X-CI-Project` | `manual-resend` | The CI project that sent the request. Routing and display only. `manual-resend` marks a hand-made request |
 | `X-CI-Pipeline-Url` | `none` | The CI pipeline link. Routing and display only. `none` when there is no pipeline |
 | `X-CI-Commit-Sha` | `none` | The CI commit. Routing and display only. `none` when there is no commit |
-| `transfer.id` | `resend-20261015-1` | Optional. PlanTransfer copies it onto every job. A UUID is made when it is absent |
+| `transfer.id` | `resend-20261015-1` | Optional. PlanRegistryTransfer copies it onto every job. A UUID is made when it is absent |
 
 **Compute `X-Sha256` for the exact Custom Text.** It is the sha256, in lowercase hexadecimal, of the Custom Text bytes. For the text `{}` it is always the value above:
 
@@ -415,19 +415,19 @@ Set one dynamic property, `registry.image.reference` = `team/app:1.0`, and leave
 
 [![Whole-image resend: one image reference](../images/image-transfer-resend-image-settings.jpg)](../images/image-transfer-resend-image-settings.jpg)
 
-The ResendImage **Properties** tab of the live card. The dialog scrolls: `X-Registry` and `X-Sha256` follow `X-Image-Count`.
+The GenerateFlowFile **Properties** tab of the live card. The dialog scrolls: `X-Registry` and `X-Sha256` follow `X-Image-Count`.
 
-1. Keep normal processing running; leave Hold disabled.
-2. If ResendImage is disabled, right-click it and choose **Enable** so it is stopped. Apply the image reference above.
-3. Right-click ResendImage and choose **Run Once**. Do not click Start.
+1. Keep normal processing running; leave LogMessage disabled.
+2. If GenerateFlowFile is disabled, right-click it and choose **Enable** so it is stopped. Apply the image reference above.
+3. Right-click GenerateFlowFile and choose **Run Once**. Do not click Start.
 4. Check the high side's tag, digest and blob sizes, and that failure and work queues drain. The generator should show one new request, not one per node.
-5. Clear `registry.image.reference` and any selective fields (leave the `X-*` set), then **Disable ResendImage**. Starting it with no reference would emit invalid requests repeatedly, and disabling it while idle stops a whole-group start from triggering an accidental resend.
+5. Clear `registry.image.reference` and any selective fields (leave the `X-*` set), then **Disable GenerateFlowFile**. Starting it with no reference would emit invalid requests repeatedly, and disabling it while idle stops a whole-group start from triggering an accidental resend.
 
 Whole-image `repository:tag` resolves the tag's **current** digest. If the tag moved, you get the current image, which may not repair an older held manifest. Prefer immutable version tags; use the selective mode below when you need to reject a changed tag. The manual reference bypasses webhook JSON and checksum parsing, but registry and allowlist validation still apply, so restrict who can configure and run the generator.
 
 #### Optional: resend named layers only
 
-For bandwidth-sensitive recovery, read the high-side bulletin's image, platform, layer numbers and eight-character check code. On the same **stopped** ResendImage card add these dynamic properties, one by one, next to the `X-*` set (and `transfer.id` if you use it):
+For bandwidth-sensitive recovery, read the high-side bulletin's image, platform, layer numbers and eight-character check code. On the same **stopped** GenerateFlowFile card add these dynamic properties, one by one, next to the `X-*` set (and `transfer.id` if you use it):
 
 | Dynamic property | Example value |
 |---|---|
@@ -436,19 +436,37 @@ For bandwidth-sensitive recovery, read the high-side bulletin's image, platform,
 | registry.check | `a1b2c3d4` (exact bulletin code) |
 | registry.platform | `linux/amd64` (exact bulletin platform; optional for a single-platform image) |
 
-Enable, apply, Run Once, clear these four properties, then Disable, with Primary node and a batch of one. The planner refuses a stale check code if the tag moved. Selective replay sends the **small config plus the selected layers**, not a manifest and not the other layers. The existing high-side manifest must still be waiting in its retry queue or in `StaleImages`. If it exhausted its retries into Hold, resending layers alone will not commit it: requeue that manifest with its retry counter reset, or use whole-image mode.
+Enable, apply, Run Once, clear these four properties, then Disable, with Primary node and a batch of one. The planner refuses a stale check code if the tag moved. Selective replay sends the **small config plus the selected layers**, not a manifest and not the other layers. The existing high-side manifest must still be waiting in its retry queue or in `StaleImages`. If it exhausted its retries into LogMessage, resending layers alone will not commit it: requeue that manifest with its retry counter reset, or use whole-image mode.
 
 Both modes were verified on the live Quay and NiFi pair, including a whole-image Run Once after the unique layer file was removed from active high-side storage; NiFi recreated it with the exact SHA-256 and size. See [the reproducible evidence and proof boundary](image-transfer-recovery-proof.md). No scheduled resend is supplied; recovery is operator-triggered.
+
+### L12. Rename the cards (optional)
+
+After everything is wired and verified, you can give the cards descriptive names: open **Configure, Settings, Name** on each. The screenshot above shows the renamed canvas. Names do not change behaviour, so skip this step if you prefer the defaults.
+
+| Native type | Suggested name |
+|---|---|
+| ListenHTTP | `ReceiveWebhook` |
+| GenerateFlowFile | `ResendImage` |
+| PlanRegistryTransfer | `PlanTransfer` |
+| SplitJson | `SplitJobs` |
+| RouteRegistryTransfer | `RouteTransfer` |
+| InvokeHTTP | `FetchBlob` |
+| CryptographicHashContent | `HashContent` |
+| RetryFlowFile | `RetryTransfer` |
+| LogMessage | `Hold` |
+| Output Port | `ToDiode` (already named) |
+
 
 ## High side
 
 The high side writes to the destination registry. It is built on the high NiFi instance, inside a process group named `ImageTransferHighSide`.
 
-How it works: the diode delivers one FlowFile per blob or manifest into `FromDiode`. `RouteTransfer` prepares an upload request, `UploadContent` sends the blob bytes, and `RouteTransfer` checks dependencies before it commits a manifest: by digest first, then by tag. A manifest whose layers have not all arrived waits quietly and passes through `RetryTransfer` until they do.
+How it works: the diode delivers one FlowFile per blob or manifest into `FromDiode`. `RouteRegistryTransfer` prepares an upload request, `InvokeHTTP` sends the blob bytes, and `RouteRegistryTransfer` checks dependencies before it commits a manifest: by digest first, then by tag. A manifest whose layers have not all arrived waits quietly and passes through `RetryFlowFile` until they do.
 
 ### High screenshot
 
-Actual screenshot of the running `ImageTransferHighSide` canvas. Click it to open it at full size. Connection labels show the selected relationships. The toolbar statistics describe the whole NiFi cluster.
+Actual screenshot of the running `ImageTransferHighSide` canvas. Click it to open it at full size. Connection labels show the selected relationships. The cards carry the suggested names, so the screenshot shows the renamed canvas (see [H11](#h11-rename-the-cards-optional)). The toolbar statistics describe the whole NiFi cluster.
 
 [![Image transfer high-side canvas](../images/image-transfer-high-side.jpg)](../images/image-transfer-high-side.jpg)
 
@@ -481,21 +499,21 @@ keytool -importcert -noprompt -alias registry-ca -file /path/to/registry-ca.pem 
   -keystore /opt/nifi/certs/registry-trust.p12 -storetype PKCS12
 ```
 
-Let keytool prompt for the password and put that password in `truststore_password`. Import any intermediate CA with its own alias. Native **InvokeHTTP replaces its trust configuration when you select an SSL Context Service**, so the truststore must hold every CA needed for the registry chain. Never disable TLS verification. `UploadContent` trusts Java's default CAs while its SSL Context Service is empty, which is enough when the registry's certificate chains to one of them (the live high side leaves it empty). Select `RegistryTrust` on `UploadContent` when the registry's CA is outside Java's default trust. With the service only on `RouteTransfer`, the controller's HEAD and upload-start POST succeed but every `UploadContent` PUT fails with `PKIX path building failed`, so the registry shows started uploads and no layers. Registry mutual TLS (client certificates) is outside this tested flow.
+Let keytool prompt for the password and put that password in `truststore_password`. Import any intermediate CA with its own alias. Native **InvokeHTTP replaces its trust configuration when you select an SSL Context Service**, so the truststore must hold every CA needed for the registry chain. Never disable TLS verification. `InvokeHTTP` trusts Java's default CAs while its SSL Context Service is empty, which is enough when the registry's certificate chains to one of them (the live high side leaves it empty). Select `RegistryTrust` on `InvokeHTTP` when the registry's CA is outside Java's default trust. With the service only on `RouteRegistryTransfer`, the controller's HEAD and upload-start POST succeed but every `InvokeHTTP` PUT fails with `PKIX path building failed`, so the registry shows started uploads and no layers. Registry mutual TLS (client certificates) is outside this tested flow.
 
 ### H2. Add the cards
 
-Use **Add Processor**, search for the type, pick the exact version, then **Configure, Settings, Name**. Add the input port `FromDiode` with the toolbar **Input Port** control.
+Use **Add Processor**, search for the type, pick the exact version and keep NiFi's default name, which is the type. Renaming the cards is the last, optional step ([H11](#h11-rename-the-cards-optional)). Add the input port with the toolbar **Input Port** control and name it `FromDiode`.
 
-| Display name | Type | Version | Initial state |
-|---|---|---|---|
-| RouteTransfer | RouteRegistryTransfer | 1.5.1 | Stopped while configuring |
-| UploadContent | InvokeHTTP | 2.12.0 | Stopped while configuring |
-| RetryTransfer | RetryFlowFile | 2.12.0 | Stopped while configuring |
-| Hold | LogMessage | 2.12.0 | **Disabled** |
-| StaleImages | LogMessage | 2.12.0 | **Disabled** |
+| Type | Version | Initial state |
+|---|---|---|
+| RouteRegistryTransfer | 1.5.1 | Stopped while configuring |
+| InvokeHTTP | 2.12.0 | Stopped while configuring |
+| RetryFlowFile | 2.12.0 | Stopped while configuring |
+| LogMessage (failure) | 2.12.0 | **Disabled** |
+| LogMessage (stale) | 2.12.0 | **Disabled** |
 
-**Hold and StaleImages are parking destinations, not processors you run.** After configuring each, right-click it and choose **Disable**. Their `success` relationship is auto-terminated only so their configuration is valid. **Starting either would consume and discard the parked FlowFiles.** Read [H10](#h10-recover-a-held-stale-or-incomplete-transfer) before changing their state.
+**The two LogMessage cards are parking destinations. LogMessage (failure) receives the `failure` queues and LogMessage (stale) receives the `stale` queue. Both are parking destinations, not processors you run.** After configuring each, right-click it and choose **Disable**. Their `success` relationship is auto-terminated only so their configuration is valid. **Starting either would consume and discard the parked FlowFiles.** Read [H10](#h10-recover-a-held-stale-or-incomplete-transfer) before changing their state.
 
 ### H3. Settings and scheduling changed from default
 
@@ -503,15 +521,15 @@ Everything not listed here stays at NiFi's default: Scheduling Strategy `Timer d
 
 | Card | Tab, setting | Value |
 |---|---|---|
-| RouteTransfer | Scheduling, Run Duration | `25 ms` |
-| Hold | Scheduling, Run Duration | `25 ms` |
-| StaleImages | Scheduling, Run Duration | `25 ms` |
+| RouteRegistryTransfer | Scheduling, Run Duration | `25 ms` |
+| LogMessage (failure) | Scheduling, Run Duration | `25 ms` |
+| LogMessage (stale) | Scheduling, Run Duration | `25 ms` |
 
 ### H4. Enter the properties
 
 Open **Configure, Properties** on each card. Each table lists only the properties you change. A required property with no default is listed even if you might expect a default. Count of changed properties is shown in each heading.
 
-#### RouteTransfer (RouteRegistryTransfer): 6 properties
+#### RouteRegistryTransfer: 6 properties
 
 | Property | Value |
 |---|---|
@@ -522,19 +540,19 @@ Open **Configure, Properties** on each card. Each table lists only the propertie
 | SSL Context Service | `RegistryTrust` (private CA only; otherwise leave unset) |
 | Target Repository | `#{dst_repository}` (leave unset to keep each source repository) |
 
-Request Timeout (`60` seconds) and Stale After Hours (`24`) stay at their defaults. RouteTransfer handles scoped registry authentication, metadata HEAD requests and empty upload-start POSTs. The high controller checks dependencies before a manifest PUT, commits by digest first and then by tag. Its relationships name the condition of the FlowFile when it leaves:
+Request Timeout (`60` seconds) and Stale After Hours (`24`) stay at their defaults. RouteRegistryTransfer handles scoped registry authentication, metadata HEAD requests and empty upload-start POSTs. The high controller checks dependencies before a manifest PUT, commits by digest first and then by tag. Its relationships name the condition of the FlowFile when it leaves:
 
 | Relationship | Condition | Goes to |
 |---|---|---|
-| `prepared` | A registry request is prepared in the `registry.http.*` attributes | UploadContent |
+| `prepared` | A registry request is prepared in the `registry.http.*` attributes | InvokeHTTP |
 | `complete` | Stored in the registry; this side's work is finished | Auto-terminate |
-| `retryable` | A transient error that can be retried | RetryTransfer |
-| `waiting` | A manifest whose layers or platform manifests have not all arrived | RetryTransfer |
-| `stale` | Still waiting after Stale After Hours | StaleImages |
-| `failure` | A permanent condition, content kept (also used if the processor raises) | Hold |
-| `unverified` | Used on the low side only; never emitted here | Hold, as a safeguard |
+| `retryable` | A transient error that can be retried | RetryFlowFile |
+| `waiting` | A manifest whose layers or platform manifests have not all arrived | RetryFlowFile |
+| `stale` | Still waiting after Stale After Hours | LogMessage (stale) |
+| `failure` | A permanent condition, content kept (also used if the processor raises) | LogMessage (failure) |
+| `unverified` | Used on the low side only; never emitted here | LogMessage (failure), as a safeguard |
 
-#### UploadContent (InvokeHTTP): 11 properties
+#### InvokeHTTP: 11 properties
 
 Add `Authorization` with **Properties, +** as a **dynamic property**. It is an HTTP header, not Request Username/Password and not the OAuth2 provider.
 
@@ -554,18 +572,18 @@ Add `Authorization` with **Properties, +** as a **dynamic property**. It is an H
 
 Add **SSL Context Service** = `RegistryTrust` only when the registry's CA is outside Java's default trust (a 12th property; the live high side leaves it empty). Leave Request Username, Request Password and the OAuth2 provider unset for a Bearer registry (Quay, GitLab, Harbor): the controller supplies a scoped Bearer token in `registry.auth.header`. Leave Request Header Attributes Pattern unset: forwarding every attribute could leak tokens. Leave redirects disabled so credentials are never sent to an unexpected host.
 
-**Basic-auth registry** (`registry:2` with htpasswd): the controller never writes Basic credentials to an attribute, so it sends an empty `Authorization`, and InvokeHTTP adds Basic itself. Set **Request Username** and **Request Password** to the same account as RouteTransfer (`#{dst_user}`, `#{dst_password}`), and **delete the `Authorization` dynamic property**. InvokeHTTP sends a header even when its value is empty, so with the property present the request carries two `Authorization` headers, one empty and one Basic. A registry behind ingress-nginx over HTTP/2 rejects that with HTTP 400 before the registry sees it, and the controller then routes every blob to `failure`. Restore the dynamic property and clear the two request credentials when you go back to a Bearer registry.
+**Basic-auth registry** (`registry:2` with htpasswd): the controller never writes Basic credentials to an attribute, so it sends an empty `Authorization`, and InvokeHTTP adds Basic itself. Set **Request Username** and **Request Password** to the same account as RouteRegistryTransfer (`#{dst_user}`, `#{dst_password}`), and **delete the `Authorization` dynamic property**. InvokeHTTP sends a header even when its value is empty, so with the property present the request carries two `Authorization` headers, one empty and one Basic. A registry behind ingress-nginx over HTTP/2 rejects that with HTTP 400 before the registry sees it, and the controller then routes every blob to `failure`. Restore the dynamic property and clear the two request credentials when you go back to a Bearer registry.
 
-#### RetryTransfer (RetryFlowFile): 2 properties
+#### RetryFlowFile: 2 properties
 
 | Property | Value |
 |---|---|
 | Retry Attribute | `registry.retries` |
 | Maximum Retries | `${registry.retry.max}` |
 
-RouteTransfer sets `registry.retry.max` to the current `registry.retries` plus `3` for transient HTTP errors, so they reach Hold after about 1.5 minutes. It sets `registry.retries` back to `0` and blanks `registry.retries.uuid` after every successful step and when a FlowFile completes, waits or goes stale, so Reuse Mode `fail` does not reject a FlowFile the low card retried. A manifest or index whose layers or platform manifests have not all arrived **waits quietly**: RouteTransfer checks its dependencies 30 seconds after the first attempt, then after 1, 2, 4, 8 and 16 minutes, then every 30 minutes, and passes through RetryTransfer with no registry request between checks. It logs nothing while it waits; the reason is on the FlowFile as `registry.error`. When the wait exceeds Stale After Hours it goes to `stale` with one warning naming the image, platform, missing layer numbers and check code. Exhausted or malformed retries go to Hold.
+RouteRegistryTransfer sets `registry.retry.max` to the current `registry.retries` plus `3` for transient HTTP errors, so they reach LogMessage (failure) after about 1.5 minutes. It sets `registry.retries` back to `0` and blanks `registry.retries.uuid` after every successful step and when a FlowFile completes, waits or goes stale, so Reuse Mode `fail` does not reject a FlowFile the low card retried. A manifest or index whose layers or platform manifests have not all arrived **waits quietly**: RouteRegistryTransfer checks its dependencies 30 seconds after the first attempt, then after 1, 2, 4, 8 and 16 minutes, then every 30 minutes, and passes through RetryFlowFile with no registry request between checks. It logs nothing while it waits; the reason is on the FlowFile as `registry.error`. When the wait exceeds Stale After Hours it goes to `stale` with one warning naming the image, platform, missing layer numbers and check code. Exhausted or malformed retries go to LogMessage (failure).
 
-#### Hold (LogMessage): 3 properties
+#### LogMessage (failure): 3 properties
 
 | Property | Value |
 |---|---|
@@ -573,7 +591,7 @@ RouteTransfer sets `registry.retry.max` to the current `registry.retries` plus `
 | Log Prefix | `Hold: ` (with a trailing space) |
 | Log Message | `discarded ${registry.image} ${registry.platform} ${registry.kind} ${registry.digest}: ${registry.error}` |
 
-#### StaleImages (LogMessage): 3 properties
+#### LogMessage (stale): 3 properties
 
 | Property | Value |
 |---|---|
@@ -594,24 +612,24 @@ Queue settings on every high connection that is not part of a loop and is not `s
 | Back Pressure Object Threshold | `20` |
 | Back Pressure Data Size Threshold | `20 GB` |
 
-Every connection that sits on a directed loop keeps Back Pressure Object Threshold at NiFi's default `10000`: `prepared`, `retryable, waiting`, `Failure, No Retry, Original, Retry` and `retry` (RouteTransfer sends to UploadContent and RetryTransfer, and each sends back to RouteTransfer). NiFi does not run a processor while any of its outgoing connections is full, so with a low limit on both sides of a loop each processor waits on the other and the loop stops for good once both fill. Set only Back Pressure Data Size Threshold `20 GB` on those connections.
+Every connection that sits on a directed loop keeps Back Pressure Object Threshold at NiFi's default `10000`: `prepared`, `retryable, waiting`, `Failure, No Retry, Original, Retry` and `retry` (RouteRegistryTransfer sends to InvokeHTTP and RetryFlowFile, and each sends back to RouteRegistryTransfer). NiFi does not run a processor while any of its outgoing connections is full, so with a low limit on both sides of a loop each processor waits on the other and the loop stops for good once both fill. Set only Back Pressure Data Size Threshold `20 GB` on those connections.
 
-On the `stale` connection leave Back Pressure Object Threshold at NiFi's default `10000` and set only Back Pressure Data Size Threshold `20 GB`: stale manifests are a few KB each and must never stop RouteTransfer. `20 GB` is a tested example, not a disk reservation. Choose a size larger than your largest blob and size the content repository for concurrent claims, retries and archival retention. The live test used 40 GiB content volumes on each node.
+On the `stale` connection leave Back Pressure Object Threshold at NiFi's default `10000` and set only Back Pressure Data Size Threshold `20 GB`: stale manifests are a few KB each and must never stop RouteRegistryTransfer. `20 GB` is a tested example, not a disk reservation. Choose a size larger than your largest blob and size the content repository for concurrent claims, retries and archival retention. The live test used 40 GiB content volumes on each node.
 
 | # | Source | Selected relationships | Destination |
 |---|---|---|---|
-| H1 | FromDiode | None (port) | RouteTransfer |
-| H2 | RouteTransfer | `prepared` | UploadContent |
-| H3 | RouteTransfer | `retryable`, `waiting` | RetryTransfer |
-| H4 | RouteTransfer | `failure`, `unverified` | Hold |
-| H5 | RouteTransfer | `stale` | StaleImages |
-| H6 | UploadContent | `Original`, `No Retry`, `Retry`, `Failure` | RouteTransfer |
-| H7 | RetryTransfer | `retry` | RouteTransfer |
-| H8 | RetryTransfer | `retries_exceeded`, `failure` | Hold |
+| H1 | Input Port `FromDiode` | None (port) | RouteRegistryTransfer |
+| H2 | RouteRegistryTransfer | `prepared` | InvokeHTTP |
+| H3 | RouteRegistryTransfer | `retryable`, `waiting` | RetryFlowFile |
+| H4 | RouteRegistryTransfer | `failure`, `unverified` | LogMessage (failure) |
+| H5 | RouteRegistryTransfer | `stale` | LogMessage (stale) |
+| H6 | InvokeHTTP | `Original`, `No Retry`, `Retry`, `Failure` | RouteRegistryTransfer |
+| H7 | RetryFlowFile | `retry` | RouteRegistryTransfer |
+| H8 | RetryFlowFile | `retries_exceeded`, `failure` | LogMessage (failure) |
 
 The H1 connection from the `FromDiode` port has no relationship to show, so name it `FromDiode`.
 
-Capitalization is deliberate: InvokeHTTP uses capitalized relationship names, while the Python processors and RetryFlowFile use lower case. `unverified` goes to Hold on purpose: the high controller never asks for content to be hashed, so a FlowFile arriving there is a fault to inspect.
+Capitalization is deliberate: InvokeHTTP uses capitalized relationship names, while the Python processors and RetryFlowFile use lower case. `unverified` goes to LogMessage (failure) on purpose: the high controller never asks for content to be hashed, so a FlowFile arriving there is a fault to inspect.
 
 ### H6. Auto-termination
 
@@ -619,28 +637,28 @@ In each processor's **Configure, Settings, Automatically Terminate Relationships
 
 | Processor | Auto-terminate |
 |---|---|
-| RouteTransfer | `original`, `complete` |
-| UploadContent | `Response` |
-| RetryTransfer | None |
-| Hold | `success` (processor stays disabled) |
-| StaleImages | `success` (processor stays disabled) |
+| RouteRegistryTransfer | `original`, `complete` |
+| InvokeHTTP | `Response` |
+| RetryFlowFile | None |
+| LogMessage (failure) | `success` (processor stays disabled) |
+| LogMessage (stale) | `success` (processor stays disabled) |
 
 No unconnected relationship may stay unterminated, or its processor stays invalid.
 
 ### H7. Layout
 
-Place `FromDiode` and `RouteTransfer` in one vertical column with Hold at the bottom. Put `UploadContent` left of the retry row and `StaleImages` right of it. Drag approximately to these top-left canvas coordinates (not screen pixels), taken from the live canvas. Ports are narrower than processors, so they use a small horizontal centering offset. Bends only affect readability.
+Place the `FromDiode` port and RouteRegistryTransfer in one vertical column with LogMessage (failure) at the bottom. Put InvokeHTTP left of RetryFlowFile and LogMessage (stale) right of it. Drag approximately to these top-left canvas coordinates (not screen pixels), taken from the live canvas. Ports are narrower than processors, so they use a small horizontal centering offset. Bends only affect readability.
 
 | Card | X | Y |
 |---|---|---|
-| FromDiode | 56 | 0 |
-| RouteTransfer | 0 | 160 |
-| UploadContent | -512 | 400 |
-| RetryTransfer | 0 | 400 |
-| StaleImages | 512 | 400 |
-| Hold | 0 | 640 |
+| Input Port `FromDiode` | 56 | 0 |
+| RouteRegistryTransfer | 0 | 160 |
+| InvokeHTTP | -512 | 400 |
+| RetryFlowFile | 0 | 400 |
+| LogMessage (stale) | 512 | 400 |
+| LogMessage (failure) | 0 | 640 |
 
-Put the long return connections in separate outer lanes and keep labels clear of cards. The [high flow spec](../flows/compact-layer-high-mcp-spec.json) is a **NiFi MCP flow spec**, not a native NiFi UI import file. It omits credentials and trust services; bind your context, set trust if needed, and disable Hold and StaleImages before starting an imported flow. Automatic layout can replace manual bends.
+Put the long return connections in separate outer lanes and keep labels clear of cards. The [high flow spec](../flows/compact-layer-high-mcp-spec.json) is a **NiFi MCP flow spec**, not a native NiFi UI import file, and it uses the suggested card names. It omits credentials and trust services; bind your context, set trust if needed, and disable LogMessage (failure) and LogMessage (stale) before starting an imported flow. Automatic layout can replace manual bends.
 
 ### H8. Receive from the diode
 
@@ -650,32 +668,45 @@ For a **same-instance test only**, the low `ToDiode` port is connected to this `
 
 ### H9. Start and verify the high side
 
-Start the high side **first**: `FromDiode` and every high card, keeping `Hold` and `StaleImages` **disabled**. Check that every active processor validates on every node. Then start the low side. After a small request has gone through, check:
+Start the high side **first**: `FromDiode` and every high card, keeping `LogMessage (failure)` and `LogMessage (stale)` **disabled**. Check that every active processor validates on every node. Then start the low side. After a small request has gone through, check:
 
 | Signal | Expected result |
 |---|---|
-| High RouteTransfer | Waiting-layer messages may appear until dependencies arrive; retries are penalized |
+| High RouteRegistryTransfer | Waiting-layer messages may appear until dependencies arrive; retries are penalized |
 | Destination tag | Present with the exact original manifest digest for the selected platform or platforms |
 | Destination blobs | Every config and layer digest exists with its planned size |
-| Queues into Hold and StaleImages | Empty after success; any retained FlowFile has `registry.error` |
+| Queues into LogMessage (failure) and LogMessage (stale) | Empty after success; any retained FlowFile has `registry.error` |
 | Work queues | Drain to zero |
 
 The live tests passed BusyBox 1.36.1 and a synthetic image with a 1,048,895,048-byte layer after the persisted extension deployment. The larger OCI manifest was `sha256:e772bf3d7e6cf1c10519f432e8ca25c4e4cdf5e830e3df198e575521543d75a7`; the destination manifest bytes and all blob sizes matched, with empty queues. The 9 GiB source seed failed at the low Quay before NiFi received a webhook, so it is **not** a validated 9 GiB transfer. Your work diode integration still needs its own end-to-end test.
 
 ### H10. Recover a held, stale or incomplete transfer
 
-Keep failed bytes in place while you read the bulletin and `registry.error`. Do not start Hold or StaleImages, empty their queues, or auto-terminate an extra error relationship to make the canvas green.
+Keep failed bytes in place while you read the bulletin and `registry.error`. Do not start LogMessage (failure) or LogMessage (stale), empty their queues, or auto-terminate an extra error relationship to make the canvas green.
 
 | Symptom | Check or action |
 |---|---|
-| High side stops moving; a queue into Hold shows 20 queued | Back pressure: each Hold queue stops its source at 20 FlowFiles, and a stopped RouteTransfer stops the whole high side, including new arrivals from the diode. Read `registry.error` on the held FlowFiles, fix the cause, then empty or replay the queue. Alert on any FlowFile in a Hold queue so it is seen at 1, not at 20 |
-| Image never appears; one warning `... incomplete: missing layers N of M ... moved to stale` | Layers were lost across the diode. The manifest is in `StaleImages`. Ask the low side to resend the image or the named layers, then move the stale manifest back to RouteTransfer (or let the resent manifest commit). A replayed stale manifest starts a fresh wait |
+| High side stops moving; a queue into LogMessage (failure) shows 20 queued | Back pressure: each LogMessage (failure) queue stops its source at 20 FlowFiles, and a stopped RouteRegistryTransfer stops the whole high side, including new arrivals from the diode. Read `registry.error` on the held FlowFiles, fix the cause, then empty or replay the queue. Alert on any FlowFile in a LogMessage (failure) queue so it is seen at 1, not at 20 |
+| Image never appears; one warning `... incomplete: missing layers N of M ... moved to stale` | Layers were lost across the diode. The manifest is in `LogMessage (stale)`. Ask the low side to resend the image or the named layers, then move the stale manifest back to RouteRegistryTransfer (or let the resent manifest commit). A replayed stale manifest starts a fresh wait |
 | Missing layers on high | Read the human image, platform, layer numbers and check code from the bulletin, and give them to the low side to resend |
-| Registry shows upload POSTs but no layer PUTs | UploadContent cannot reach the registry. Causes: no `RegistryTrust` on it (`PKIX path building failed`); a Basic registry without Request Username and Password (HTTP 401); or a Basic registry where UploadContent still has the `Authorization` dynamic property (HTTP 400 from the proxy, logged by ingress-nginx as request `"-"`). The controller logs each retry reason as a warning bulletin |
+| Registry shows upload POSTs but no layer PUTs | InvokeHTTP cannot reach the registry. Causes: no `RegistryTrust` on it (`PKIX path building failed`); a Basic registry without Request Username and Password (HTTP 401); or a Basic registry where InvokeHTTP still has the `Authorization` dynamic property (HTTP 400 from the proxy, logged by ingress-nginx as request `"-"`). The controller logs each retry reason as a warning bulletin |
 | Foreign upload URL | Refused by this controller; use a compatible registry or a separately reviewed transfer option |
 | 401 or 403 | Check robot repository permissions and token; retries do not repair missing permissions |
-| PKIX or certificate failure | Configure CA trust separately for RouteTransfer and UploadContent; a selected Java truststore replaces native defaults |
+| PKIX or certificate failure | Configure CA trust separately for RouteRegistryTransfer and InvokeHTTP; a selected Java truststore replaces native defaults |
 | Exhausted network retries | Fix registry or network trouble; the low side submits the same trusted request again, and blobs already present on high are deduplicated |
 | Stalled large blob | Check content disk, queue byte threshold, ingress and registry timeouts, and active InvokeHTTP tasks before raising concurrency |
 
-The low side resends by image and tag (or by layer numbers and check code) using its `ResendImage` card. The high side needs no change for a resend: it skips blobs it already holds and uploads the missing ones. A resent manifest also repairs an earlier manifest that exhausted its retries into Hold. See [the reproducible evidence and proof boundary](image-transfer-recovery-proof.md).
+The low side resends by image and tag (or by layer numbers and check code) using its GenerateFlowFile card. The high side needs no change for a resend: it skips blobs it already holds and uploads the missing ones. A resent manifest also repairs an earlier manifest that exhausted its retries into LogMessage (failure). See [the reproducible evidence and proof boundary](image-transfer-recovery-proof.md).
+
+### H11. Rename the cards (optional)
+
+After everything is wired and verified, you can give the cards descriptive names: open **Configure, Settings, Name** on each. The screenshot above shows the renamed canvas. Names do not change behaviour, so skip this step if you prefer the defaults.
+
+| Native type | Suggested name |
+|---|---|
+| RouteRegistryTransfer | `RouteTransfer` |
+| InvokeHTTP | `UploadContent` |
+| RetryFlowFile | `RetryTransfer` |
+| LogMessage (failure) | `Hold` |
+| LogMessage (stale) | `StaleImages` |
+| Input Port | `FromDiode` (already named) |
