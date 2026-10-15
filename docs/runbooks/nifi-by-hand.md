@@ -1,6 +1,6 @@
 # Building the webhook flow by hand in the NiFi 2.x UI
 
-For **PLANA compact native layer transfer**, use [the complete PLANA build guide and low/high screenshots](nifi-by-hand-compact-layer-flow.md). This page describes the separate tar-based flow.
+To build the transfer across a data diode, follow [the image transfer build guide](image-transfer-build-by-hand.md). This page describes the separate single-NiFi flow in which ExportContainerImages writes a tar and PushContainerImages pushes it.
 
 
 The flow: gitlab-registry-mirror posts a webhook, ExportContainerImages writes the named images to a tar on local disk, PushContainerImages pushes that tar into the target registry.

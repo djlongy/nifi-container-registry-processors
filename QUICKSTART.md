@@ -1,6 +1,6 @@
 # Quickstart
 
-This gets one container image from a source registry into a target registry through NiFi 2.x, using the Python processors and the gitlab-registry-mirror webhook. All hosts and passwords below are placeholders. For every property and the other flow (scheduled Pull across a diode), see [README.md](README.md). For the same flow built click by click in the UI, see [docs/runbooks/nifi-by-hand.md](docs/runbooks/nifi-by-hand.md).
+To move images across a data diode, build [the image transfer runbook](docs/runbooks/image-transfer-build-by-hand.md) instead: it is the supported transfer. This quickstart is the smaller single-NiFi flow. It gets one container image from a source registry into a target registry through NiFi 2.x, using the Python processors and the gitlab-registry-mirror webhook. All hosts and passwords below are placeholders. For every property and the scheduled Pull flow, see [README.md](README.md). For the same flow built click by click in the UI, see [docs/runbooks/nifi-by-hand.md](docs/runbooks/nifi-by-hand.md).
 
 You need: NiFi 2.x with Python enabled (`nifi.python.command` set), shell access to the NiFi node, `keytool` (any JDK), and an image in the source registry.
 
