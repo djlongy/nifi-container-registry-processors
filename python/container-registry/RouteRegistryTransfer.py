@@ -163,8 +163,12 @@ class RouteRegistryTransfer(FlowFileTransform):
             return self._finish("complete")
         if not TAG.fullmatch(reference or ""):
             raise RegistryError("invalid manifest tag")
-        return self._result("prepared", {**self._http("PUT", f"{client.base}/v2/{repository}/manifests/{reference}",
-            self._header(client, repository, WRITE_SCOPE), facts[MEDIA_TYPE], "manifest-tag"), **self.FRESH_RETRIES})
+        response = client._send(repository, WRITE_SCOPE, "GET", "")  # a scoped token for the tag PUT
+        client._expect(response, "registry authentication", 200)
+        response.close()
+        # The retry count carries on from the digest PUT: a tag PUT that keeps failing reaches Hold.
+        return self._result("prepared", self._http("PUT", f"{client.base}/v2/{repository}/manifests/{reference}",
+            self._header(client, repository, WRITE_SCOPE), facts[MEDIA_TYPE], "manifest-tag"))
 
     def _callback(self, context, side, stage, flowfile, facts):
         if stage == "verify":
