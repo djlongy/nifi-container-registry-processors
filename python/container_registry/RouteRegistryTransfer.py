@@ -107,10 +107,11 @@ class RouteRegistryTransfer(FlowFileTransform):
 
     @staticmethod
     def _header(client, repository, actions):
+        """The Authorization value for the native InvokeHTTP: a scoped Bearer token, or empty. Basic credentials
+        are never written to an attribute: for a Basic registry, set them on InvokeHTTP's sensitive Request
+        Username and Request Password instead."""
         header = client._with_auth((repository, actions, None), {}).get("Authorization", "")
-        if header and not header.startswith("Bearer "):
-            raise RegistryError("native payloads require Bearer or anonymous auth; Basic credentials must stay in sensitive properties")
-        return header
+        return header if header.startswith("Bearer ") else ""
 
     def _http_failure(self, stage, status):
         if status == 0 or status in (401, 408, 429) or status >= 500:
@@ -242,6 +243,7 @@ class RouteRegistryTransfer(FlowFileTransform):
                 return self._callback(side, stage, flowfile, facts)
             return self._request(context, side, flowfile, facts, attributes)
         except RegistryError as error:
+            self.logger.warn(f"retrying: {error}")
             return self._retry(str(error))
         except (ValueError, KeyError, TypeError) as error:
             return self._finish("failure", f"invalid registry job: {type(error).__name__}")
