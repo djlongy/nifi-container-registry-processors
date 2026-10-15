@@ -161,7 +161,6 @@
     },
     {
       "type": "connection",
-      "name": "success",
       "source": "ReceiveWebhook",
       "target": "PlanTransfer",
       "relationships": [
@@ -172,7 +171,6 @@
     },
     {
       "type": "connection",
-      "name": "success",
       "source": "PlanTransfer",
       "target": "SplitJobs",
       "relationships": [
@@ -183,7 +181,6 @@
     },
     {
       "type": "connection",
-      "name": "failure",
       "source": "PlanTransfer",
       "target": "Hold",
       "relationships": [
@@ -194,7 +191,6 @@
     },
     {
       "type": "connection",
-      "name": "split",
       "source": "SplitJobs",
       "target": "RouteTransfer",
       "relationships": [
@@ -205,7 +201,6 @@
     },
     {
       "type": "connection",
-      "name": "failure",
       "source": "SplitJobs",
       "target": "Hold",
       "relationships": [
@@ -216,7 +211,6 @@
     },
     {
       "type": "connection",
-      "name": "prepared",
       "source": "RouteTransfer",
       "target": "FetchBlob",
       "relationships": [
@@ -227,7 +221,6 @@
     },
     {
       "type": "connection",
-      "name": "unverified",
       "source": "RouteTransfer",
       "target": "HashContent",
       "relationships": [
@@ -238,7 +231,6 @@
     },
     {
       "type": "connection",
-      "name": "complete",
       "source": "RouteTransfer",
       "target": "ToDiode",
       "relationships": [
@@ -249,7 +241,6 @@
     },
     {
       "type": "connection",
-      "name": "retryable",
       "source": "RouteTransfer",
       "target": "RetryTransfer",
       "relationships": [
@@ -260,7 +251,6 @@
     },
     {
       "type": "connection",
-      "name": "failure",
       "source": "RouteTransfer",
       "target": "Hold",
       "relationships": [
@@ -271,7 +261,6 @@
     },
     {
       "type": "connection",
-      "name": "Response",
       "source": "FetchBlob",
       "target": "RouteTransfer",
       "relationships": [
@@ -282,7 +271,6 @@
     },
     {
       "type": "connection",
-      "name": "Failure, No Retry, Retry",
       "source": "FetchBlob",
       "target": "RouteTransfer",
       "relationships": [
@@ -295,7 +283,6 @@
     },
     {
       "type": "connection",
-      "name": "success",
       "source": "HashContent",
       "target": "RouteTransfer",
       "relationships": [
@@ -306,7 +293,6 @@
     },
     {
       "type": "connection",
-      "name": "failure",
       "source": "HashContent",
       "target": "Hold",
       "relationships": [
@@ -317,7 +303,6 @@
     },
     {
       "type": "connection",
-      "name": "retry",
       "source": "RetryTransfer",
       "target": "RouteTransfer",
       "relationships": [
@@ -328,7 +313,6 @@
     },
     {
       "type": "connection",
-      "name": "failure, retries_exceeded",
       "source": "RetryTransfer",
       "target": "Hold",
       "relationships": [

@@ -119,7 +119,6 @@
     },
     {
       "type": "connection",
-      "name": "prepared",
       "source": "RouteTransfer",
       "target": "UploadContent",
       "relationships": [
@@ -130,7 +129,6 @@
     },
     {
       "type": "connection",
-      "name": "retryable, waiting",
       "source": "RouteTransfer",
       "target": "RetryTransfer",
       "relationships": [
@@ -142,7 +140,6 @@
     },
     {
       "type": "connection",
-      "name": "failure, unverified",
       "source": "RouteTransfer",
       "target": "Hold",
       "relationships": [
@@ -154,7 +151,6 @@
     },
     {
       "type": "connection",
-      "name": "Failure, No Retry, Original, Retry",
       "source": "UploadContent",
       "target": "RouteTransfer",
       "relationships": [
@@ -168,7 +164,6 @@
     },
     {
       "type": "connection",
-      "name": "retry",
       "source": "RetryTransfer",
       "target": "RouteTransfer",
       "relationships": [
@@ -179,7 +174,6 @@
     },
     {
       "type": "connection",
-      "name": "failure, retries_exceeded",
       "source": "RetryTransfer",
       "target": "Hold",
       "relationships": [
@@ -191,7 +185,6 @@
     },
     {
       "type": "connection",
-      "name": "stale",
       "source": "RouteTransfer",
       "target": "StaleImages",
       "relationships": [
