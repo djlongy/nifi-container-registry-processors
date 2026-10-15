@@ -16,7 +16,8 @@
         "Registry URL": "#{dst_url}",
         "Registry Username": "#{dst_user}",
         "Registry Password": "#{dst_password}",
-        "Target Repository": "#{dst_repository}"
+        "Target Repository": "#{dst_repository}",
+        "Stale After Hours": "24"
       },
       "auto_terminated": [
         "ready",
@@ -74,6 +75,20 @@
     {
       "type": "processor",
       "name": "Hold",
+      "processor_type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+      "properties": {},
+      "auto_terminated": [
+        "success"
+      ],
+      "bundle": {
+        "group": "org.apache.nifi",
+        "artifact": "nifi-update-attribute-nar",
+        "version": "2.12.0"
+      }
+    },
+    {
+      "type": "processor",
+      "name": "StaleImages",
       "processor_type": "org.apache.nifi.processors.attributes.UpdateAttribute",
       "properties": {},
       "auto_terminated": [
@@ -164,6 +179,17 @@
       ],
       "back_pressure_data_size_threshold": "20 GB",
       "back_pressure_object_threshold": 20
+    },
+    {
+      "type": "connection",
+      "name": "RouteTransferToStaleImages",
+      "source": "RouteTransfer",
+      "target": "StaleImages",
+      "relationships": [
+        "stale"
+      ],
+      "back_pressure_data_size_threshold": "20 GB",
+      "back_pressure_object_threshold": 10000
     }
   ]
 }
