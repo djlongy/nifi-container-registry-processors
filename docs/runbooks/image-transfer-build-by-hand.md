@@ -415,6 +415,8 @@ Set one dynamic property, `registry.image.reference` = `team/app:1.0`, and leave
 
 [![Whole-image resend: one image reference](../images/image-transfer-resend-image-settings.jpg)](../images/image-transfer-resend-image-settings.jpg)
 
+The ResendImage **Properties** tab of the live card. The dialog scrolls: `X-Registry` and `X-Sha256` follow `X-Image-Count`.
+
 1. Keep normal processing running; leave Hold disabled.
 2. If ResendImage is disabled, right-click it and choose **Enable** so it is stopped. Apply the image reference above.
 3. Right-click ResendImage and choose **Run Once**. Do not click Start.
@@ -435,8 +437,6 @@ For bandwidth-sensitive recovery, read the high-side bulletin's image, platform,
 | registry.platform | `linux/amd64` (exact bulletin platform; optional for a single-platform image) |
 
 Enable, apply, Run Once, clear these four properties, then Disable, with Primary node and a batch of one. The planner refuses a stale check code if the tag moved. Selective replay sends the **small config plus the selected layers**, not a manifest and not the other layers. The existing high-side manifest must still be waiting in its retry queue or in `StaleImages`. If it exhausted its retries into Hold, resending layers alone will not commit it: requeue that manifest with its retry counter reset, or use whole-image mode.
-
-[![Selective replay settings from the live proof](../images/image-transfer-replay-layer-settings.jpg)](../images/image-transfer-replay-layer-settings.jpg)
 
 Both modes were verified on the live Quay and NiFi pair, including a whole-image Run Once after the unique layer file was removed from active high-side storage; NiFi recreated it with the exact SHA-256 and size. See [the reproducible evidence and proof boundary](image-transfer-recovery-proof.md). No scheduled resend is supplied; recovery is operator-triggered.
 
