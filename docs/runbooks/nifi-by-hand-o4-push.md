@@ -90,7 +90,7 @@ Name `O3b retry`. Properties:
 Set **Penalty Duration** to `10 sec` on the Settings tab. Connections:
 
 - `retry` goes back to O2.
-- `retries_exceeded` and `failure` go to a hold queue: an `UpdateAttribute` named `HOLD` that you leave stopped. Content is never auto-terminated on failure. Connect H1 `unmatched` to the same queue.
+- `retries_exceeded` and `failure` go to a hold queue: a `LogMessage` named `Hold` that you leave disabled (Log Level `warn`, Log Prefix `Hold: `, Log Message `discarded ${dst.repo}@${blob.digest}: ${execution.error}`, `success` auto-terminated), so enabling it logs each FlowFile as it discards it. Content is never auto-terminated on failure. Connect H1 `unmatched` to the same queue.
 
 ## 8. Facts that shape the settings
 
