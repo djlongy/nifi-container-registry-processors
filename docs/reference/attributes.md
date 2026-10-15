@@ -2,7 +2,7 @@
 title: Attribute reference
 type: reference
 status: current
-updated: 2026-10-14
+updated: 2026-10-15
 ---
 
 # Attribute reference
@@ -32,6 +32,29 @@ Read from the incoming FlowFile (it ignores the content when `registry.image.ref
 | `planner.job.count` | written | Jobs in the content |
 
 Each job in `$.jobs`: `kind` (`config`, `blob`, `manifest`, `index`), `repository`, `digest`, `size`, `mediaType`, `tag`, `reference`, `layer`, `layers`, `platform`, `check`, `transfer`, `needs`, and for manifests and indexes `body` (base64 of the exact source bytes). The native flow turns them into the attributes `kind`, `repository`, `digest`, `size`, `tag`, `reference`, `layer.n`, `layer.m`, `platform`, `check`, `transfer.id` and `media.type`.
+
+## RouteRegistryTransfer
+
+Troubleshoot a stuck or failed FlowFile in this order: `registry.error`, then `registry.stage` with `invokehttp.status.code`, then the job attributes.
+
+| Attribute | Direction | Value |
+|---|---|---|
+| `registry.error` | written | Why the last pass failed, retried or waited. Empty after a clean pass. Starts with the same text as the bulletin |
+| `registry.stage` | written | The step a native processor is running for this FlowFile: `fetch` (low InvokeHTTP GET), `verify` (low CryptographicHashContent), `upload` (high blob PUT), `manifest-digest` and `manifest-tag` (high manifest PUTs). Empty between steps |
+| `invokehttp.status.code`, `invokehttp.java.exception.message` | read | The answer of the native InvokeHTTP. `0` with a Java message means no HTTP answer. `401`, `408`, `429` and `5xx` retry; other codes fail |
+| `registry.http.method`, `registry.http.url`, `registry.http.media.type` | written | The request the native InvokeHTTP makes next |
+| `registry.auth.header` | written | A scoped Bearer token for that request, or empty. Cleared after every step. Basic credentials never go in an attribute |
+| `registry.kind` | read, written on low | `blob`, `config`, `manifest` or `index` |
+| `registry.image`, `registry.platform` | read, written on low | The image (`repository:tag`) and platform the job belongs to, as the bulletins name them |
+| `registry.repository`, `registry.digest`, `registry.size`, `registry.media.type` | read, written on low | The planned object. Content of another size or digest fails |
+| `registry.reference` | read, written on low | The tag (or digest) a manifest is published under |
+| `registry.needs`, `registry.layer.count` | read, written on low | A manifest's blobs or an index's manifests, in order, and the layer count |
+| `registry.check` | read, written on low | The check code a resend must quote |
+| `registry.manifest.tag.url` | written | The tag PUT that follows a committed digest PUT |
+| `resp.Docker-Content-Digest` | read | The digest the destination reports for a manifest. A different digest fails |
+| `registry.retry.max` | written | Retries RetryFlowFile allows: `3` after an error, unlimited while a manifest waits |
+| `registry.wait.since`, `registry.wait.checks`, `registry.wait.next` | written, high | A manifest waiting for its layers: when the wait began (epoch seconds), checks so far, and when the next check is due. Cleared when the manifest moves to `stale` |
+| `content_SHA-256` | read, low | CryptographicHashContent's result, compared with `registry.digest` |
 
 ## ExportContainerImages
 
