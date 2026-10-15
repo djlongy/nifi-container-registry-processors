@@ -33,7 +33,9 @@
         "Platform Selection": "#{platforms}",
         "Request Timeout": "120"
       },
-      "auto_terminated": [],
+      "auto_terminated": [
+        "original"
+      ],
       "bundle": {
         "group": "org.apache.nifi",
         "artifact": "python-extensions",
@@ -67,6 +69,7 @@
         "Registry Password": "#{src_password}"
       },
       "auto_terminated": [
+        "original",
         "stale",
         "waiting"
       ],
