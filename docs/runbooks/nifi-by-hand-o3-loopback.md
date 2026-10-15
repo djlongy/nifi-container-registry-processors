@@ -29,14 +29,14 @@ Enable it. Every node needs the keystore at the same path. A sensitive password 
 | SSL Context Service | the service above |
 | Client Authentication | `REQUIRED` |
 | Authorized Subject DN Pattern | `CN=nifi-loopback.*` |
-| HTTP Headers to receive as Attributes (Regex) | `X-.*\|filename` |
+| HTTP Headers for Attributes | `X-.*\|filename` |
 | Max Unconfirmed Flowfile Time | default |
 
 `ListenHTTP` has no bind-address property, so it listens on every interface and another pod can reach `pod-IP:18100`. The three tests that matter: no client certificate is refused at the handshake, a certificate with another DN gets 403, the right certificate gets 200. Do not protect it with a shared token in a header: header values are attributes, so the token would appear in provenance.
 
 ## 3. GenerateFlowFile (trigger)
 
-Scheduling: **Execution** `Primary node`. Custom Text empty. Add attributes as dynamic properties: `dst.repo`, `blob.digest`, `X-Layer-N`, `X-Layer-M`, `X-Image-Id`.
+Scheduling: **Execution** `Primary node`. Custom Text empty. Add attributes as dynamic properties: `dst.repo`, `blob.digest`, `X-Layer-N`, `X-Layer-M`, `X-Image-Id`. A GenerateFlowFile starts with no attributes of the webhook or of any earlier step, so these five are the complete set, and each must be added by hand, one dynamic property each. All five are read by the ExecuteStreamCommand **Command Arguments** below: `dst.repo` (the destination repository, for example `team/app`), `blob.digest` (the blob, for example `sha256:<64 hex>`), and `X-Image-Id`, `X-Layer-N` and `X-Layer-M` (an image id, the layer number and the layer count, sent on as request headers). A missing one is evaluated as an empty string in the command line. This card does not stand in for the gitlab-registry-mirror webhook, so no `X-Sha256` or `X-Artifact-Type` is needed.
 
 ## 4. ExecuteStreamCommand (poster)
 
