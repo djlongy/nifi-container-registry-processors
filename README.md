@@ -8,7 +8,7 @@ The earlier NAR releases (v1.x on GitHub) are no longer maintained. The Python p
 
 ## More documentation
 
-For **PLANA native layer transfer**, use the [by-hand build guide, split into a low-side and a high-side part, with canvas screenshots](docs/runbooks/nifi-by-hand-compact-layer-flow.md). Each side lists its own properties changed from default, connections and recovery steps.
+**To build the transfer across a data diode, follow one guide: [the image transfer build guide](docs/runbooks/image-transfer-build-by-hand.md).** It is split into a low-side and a high-side part, with canvas screenshots, and each side lists its own properties changed from default, connections and recovery steps. The designs the project did not adopt are kept in [docs/archive/](docs/archive/README.md).
 
 For what each processor requires of its input (body fields, attributes and headers, and the error text and relationship when they are missing or wrong), see the [input contract](docs/reference/contract.md).
 
@@ -41,7 +41,8 @@ A change to this layout is a new major version.
 |---|---|---|
 | PullContainerImages | source | Reads a source registry on a schedule (primary node only) and writes one export tar of what changed to Tar Output Directory, then emits an empty FlowFile naming it, for FetchFile |
 | ExportContainerImages | source | Takes a gitlab-registry-mirror webhook as a FlowFile and writes one export tar of the images it names to Tar Output Directory |
-| PlanRegistryTransfer | source | Plans a layer-level transfer: reads manifests only and emits one JSON job list (config, layers, manifests, index) that native processors act on. See [docs/runbooks/nifi-by-hand-native-layer-flow.md](docs/runbooks/nifi-by-hand-native-layer-flow.md) |
+| PlanRegistryTransfer | source | Plans a layer-level transfer: reads manifests only and emits one JSON job list (config, layers, manifests, index) that native processors act on. Used by the [image transfer build guide](docs/runbooks/image-transfer-build-by-hand.md) |
+| RouteRegistryTransfer | both | Prepares each registry request, checks digests, sizes and dependencies, and routes native InvokeHTTP downloads and uploads, retries and failures. Used by the [image transfer build guide](docs/runbooks/image-transfer-build-by-hand.md) |
 | PushContainerImages | target | Pushes every image of an export tar into the target registry, digests unchanged, and reads each tag back |
 
 Property names say which registry they belong to: `Source Registry ...` on Pull and Export, `Target Registry ...` on Push. Rewrite Target Base Path and Strip Target Base Path change the repository name the images get on the target, whichever processor applies them.
@@ -88,11 +89,11 @@ The NiFi 2.x Python API cannot stream: content is one `bytes` object and about 1
 | Option | Use when | Evidence | By hand |
 |---|---|---|---|
 | O1 Staging dir + FetchFile (these processors) | Default for tar-shaped flows | 3 GiB, lab flow | [nifi-by-hand.md](docs/runbooks/nifi-by-hand.md) |
-| O2 One FlowFile per layer (InvokeHTTP) | Exact digests, per-layer resend, a diode that carries many files | 1 GiB, 3-node cluster | [O2](docs/runbooks/nifi-by-hand-o2-layer-flow.md) |
-| O3 Loopback ListenHTTP with mTLS | No staging disk allowed | 1 GiB, 3-node cluster | [O3](docs/runbooks/nifi-by-hand-o3-loopback.md) |
-| O4 Push from stdin ([push_from_stdin.py](python/scripts/push_from_stdin.py)) | Push a layer or manifest FlowFile with no Python processor | 3 GiB lab, 5 MB cluster | [O4](docs/runbooks/nifi-by-hand-o4-push.md) |
+| O2 One FlowFile per layer (InvokeHTTP), archived | Exact digests, per-layer resend, a diode that carries many files | 1 GiB, 3-node cluster | [O2](docs/archive/nifi-by-hand-o2-layer-flow.md) |
+| O3 Loopback ListenHTTP with mTLS, archived | No staging disk allowed | 1 GiB, 3-node cluster | [O3](docs/archive/nifi-by-hand-o3-loopback.md) |
+| O4 Push from stdin ([push_from_stdin.py](python/scripts/push_from_stdin.py)), archived | Push a layer or manifest FlowFile with no Python processor | 3 GiB lab, 5 MB cluster | [O4](docs/archive/nifi-by-hand-o4-push.md) |
 
-The diode high side uses the O2 transfer with the O4 push. Validate the chosen option before a release.
+The diode transfer is the [image transfer flow](docs/runbooks/image-transfer-build-by-hand.md), which supersedes O2, O3 and O4: PlanRegistryTransfer and RouteRegistryTransfer with native InvokeHTTP, one FlowFile per blob and manifest. O1 is the tar flow of Pull, Export and Push on one NiFi. Validate the chosen option before a release.
 
 ### One tar per image
 

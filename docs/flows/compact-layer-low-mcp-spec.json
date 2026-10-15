@@ -1,6 +1,6 @@
 {
   "process_group": {
-    "name": "PLANALowSide"
+    "name": "ImageTransferLowSide"
   },
   "objects": [
     {
@@ -8,7 +8,7 @@
       "name": "ReceiveWebhook",
       "processor_type": "org.apache.nifi.processors.standard.ListenHTTP",
       "properties": {
-        "Base Path": "plana-webhook",
+        "Base Path": "image-transfer-webhook",
         "Listening Port": "9617",
         "HTTP Headers for Attributes": "(?i)(X-.*|Filename|Content-Type)",
         "Return Code": "202",

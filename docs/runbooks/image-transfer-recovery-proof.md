@@ -1,6 +1,6 @@
-# PLANA live recovery proof
+# Image transfer live recovery proof
 
-On 2026-10-15 (Sydney; 2026-10-14 UTC), the production NiFi 2.12.0 flow with PlanRegistryTransfer/RouteRegistryTransfer 1.5.1 recovered a missing layer using both a selective replay and an image/tag-only replay. No processor source code changed. [The by-hand guide](nifi-by-hand-compact-layer-flow.md#9-recover-a-held-or-incomplete-transfer) documents the operator controls; [the evidence JSON](../reference/plana-recovery-evidence.json) records status, hashes, sizes, timestamps and selected provenance events without credentials or FlowFile attribute dumps.
+On 2026-10-15 (Sydney; 2026-10-14 UTC), the production NiFi 2.12.0 flow with PlanRegistryTransfer/RouteRegistryTransfer 1.5.1 recovered a missing layer using both a selective replay and an image/tag-only replay. No processor source code changed. [The by-hand guide](image-transfer-build-by-hand.md#9-recover-a-held-or-incomplete-transfer) documents the operator controls; [the evidence JSON](../reference/image-transfer-recovery-evidence.json) records status, hashes, sizes, timestamps and selected provenance events without credentials or FlowFile attribute dumps.
 
 ## Fixture and deletion boundary
 
@@ -29,7 +29,7 @@ High rechecked the exact fixture manifest and emitted this real warning while re
 
 > `ci/plana-busybox:replay-proof-20261015 (linux/amd64) incomplete: missing layers 2 of 2. Check code f6d01108`
 
-[![Actual missing-layer bulletin](../images/plana-missing-layer-bulletin.jpg)](../images/plana-missing-layer-bulletin.jpg)
+[![Actual missing-layer bulletin](../images/image-transfer-missing-layer-bulletin.jpg)](../images/image-transfer-missing-layer-bulletin.jpg)
 
 (A GenerateFlowFile starts with none of the webhook's attributes; the dynamic properties it needs, and nothing else, are listed in [the input contract](../reference/contract.md#standing-in-for-the-webhook-with-generateflowfile).) The low stopped GenerateFlowFile had image reference, `registry.layers=2`, `registry.check=f6d01108`, `registry.platform=linux/amd64`, Primary node execution and batch size 1. Run once created exactly **one request**. Low fetched the 337-byte config and the 262,414-byte missing layer; it did not fetch layer 1 for this replay. High uploaded layer 2, skipped the existing config, and then committed the retained manifest by digest and tag. High HEAD/GET became 200, the downloaded blob hash/size matched, and both work/failure canvases drained.
 
@@ -50,9 +50,9 @@ At **15:09:28 UTC**, the unique layer 2 file was absent from active storage and 
 | High InvokeHTTP SEND manifest by digest | 15:10:02.415 | 12759242 | 561 |
 | High InvokeHTTP SEND manifest tag | 15:10:02.456 | 12759246 | 561 |
 
-At **15:09:46.885 UTC**, high HEAD/GET already returned 200 and the downloaded layer matched both its expected SHA-256 and size. A direct filesystem check confirmed the active blob file had been recreated with those exact bytes, before cleanup touched the manifest association. After the dependency retry, the new manifest job completed too. Both PLANA sides finished with zero queued FlowFiles, including zero failures into Hold.
+At **15:09:46.885 UTC**, high HEAD/GET already returned 200 and the downloaded layer matched both its expected SHA-256 and size. A direct filesystem check confirmed the active blob file had been recreated with those exact bytes, before cleanup touched the manifest association. After the dependency retry, the new manifest job completed too. Both sides finished with zero queued FlowFiles, including zero failures into Hold.
 
-[![Recovered high side, queues empty](../images/plana-recovered-high-side.jpg)](../images/plana-recovered-high-side.jpg)
+[![Recovered high side, queues empty](../images/image-transfer-recovered-high-side.jpg)](../images/image-transfer-recovered-high-side.jpg)
 
 The high `RecheckManifestProof` source shown above was used only to place the fixture manifest back through dependency checking. It is disabled and is **not required in the work flow**. The low ResendImage request fields were cleared and that generator disabled after the tests; both Holds stayed disabled throughout. Fixture data and fault backups are retained for review.
 

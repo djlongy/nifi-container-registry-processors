@@ -1,6 +1,6 @@
-# Build PLANA compact layer transfer by hand
+# Build the image transfer by hand
 
-PLANA moves a container image across a data diode one layer at a time. The low side reads the source registry and sends one FlowFile per blob and per manifest. The high side checks that every layer a manifest needs has arrived, uploads the blobs, then commits the manifest by digest and by tag. This guide is for **NiFi 2.12.0** with **PlanRegistryTransfer / RouteRegistryTransfer 1.5.1**.
+The image transfer moves a container image across a data diode one layer at a time. The low side reads the source registry and sends one FlowFile per blob and per manifest. The high side checks that every layer a manifest needs has arrived, uploads the blobs, then commits the manifest by digest and by tag. This guide is for **NiFi 2.12.0** with **PlanRegistryTransfer / RouteRegistryTransfer 1.5.1**.
 
 The two sides are built on different NiFi instances at work, so the guide is split the same way:
 
@@ -35,19 +35,19 @@ The low side needs **PlanRegistryTransfer** and **RouteRegistryTransfer**. The h
 
 ## Low side
 
-The low side reads the source registry. It is built on the low NiFi instance, inside a process group named `PLANALowSide`.
+The low side reads the source registry. It is built on the low NiFi instance, inside a process group named `ImageTransferLowSide`.
 
 How it works: a webhook (or the optional `ResendImage` card) delivers a small JSON request. `PlanTransfer` resolves the image into jobs, `SplitJobs` makes one FlowFile per job, and `RouteTransfer` prepares each registry request. `FetchBlob` downloads the bytes, `HashContent` checks them, and `RouteTransfer` releases the verified FlowFile to `ToDiode`.
 
 ### Low screenshot
 
-Actual screenshot of the running, empty-queue `PLANALowSide` canvas on 2026-10-15. Click it to open it at full size. Connection labels are the queue names. Statistics in the top toolbar describe the whole NiFi cluster, not only PLANA.
+Actual screenshot of the running, empty-queue `ImageTransferLowSide` canvas on 2026-10-15. Click it to open it at full size. Connection labels are the queue names. Statistics in the top toolbar describe the whole NiFi cluster, not only the image transfer.
 
-[![PLANA low-side canvas](../images/plana-low-side.jpg)](../images/plana-low-side.jpg)
+[![Image transfer low-side canvas](../images/image-transfer-low-side.jpg)](../images/image-transfer-low-side.jpg)
 
 ### L1. Create the group, parameters and optional trust
 
-On the low NiFi instance, create a **Process Group** named `PLANALowSide` and build everything below inside it. Open **Global menu, Parameter Contexts, +** and create a context holding only the source-side parameters. Bind it with **PLANALowSide, Configure, Parameter Context**. Do not put destination credentials here.
+On the low NiFi instance, create a **Process Group** named `ImageTransferLowSide` and build everything below inside it. Open **Global menu, Parameter Contexts, +** and create a context holding only the source-side parameters. Bind it with **ImageTransferLowSide, Configure, Parameter Context**. Do not put destination credentials here.
 
 | Parameter | Sensitive | Example value / purpose |
 |---|---|---|
@@ -75,7 +75,7 @@ keytool -importcert -noprompt -alias registry-ca -file /path/to/registry-ca.pem 
   -keystore /opt/nifi/certs/registry-trust.p12 -storetype PKCS12
 ```
 
-Let keytool prompt for the password and put that password in `truststore_password`. Import any intermediate CA with its own alias. Native **InvokeHTTP replaces its trust configuration when you select an SSL Context Service**, so the truststore must hold every CA needed for the registry chain. Never disable TLS verification. Select `RegistryTrust` on **all three** of `PlanTransfer`, `RouteTransfer` and `FetchBlob`. If it is only on `RouteTransfer`, the controller's HEAD requests succeed but every `FetchBlob` request fails with `PKIX path building failed`. Registry mutual TLS (client certificates) is outside this tested flow.
+Let keytool prompt for the password and put that password in `truststore_password`. Import any intermediate CA with its own alias. Native **InvokeHTTP replaces its trust configuration when you select an SSL Context Service**, so the truststore must hold every CA needed for the registry chain. Never disable TLS verification. Select `RegistryTrust` on `PlanTransfer` and `RouteTransfer` for a private CA. `FetchBlob` trusts Java's default CAs while its SSL Context Service is empty, which is enough when the registry's certificate chains to one of them (the live low side leaves it empty); select `RegistryTrust` on it when the CA is outside that trust. With the service only on the Python processors, the controller's HEAD requests succeed but every `FetchBlob` request fails with `PKIX path building failed`. Registry mutual TLS (client certificates) is outside this tested flow.
 
 ### L2. Add the cards
 
@@ -114,7 +114,7 @@ Open **Configure, Properties** on each card. Each table lists only the propertie
 
 | Property | Value |
 |---|---|
-| Base Path | `plana-webhook` |
+| Base Path | `image-transfer-webhook` |
 | Listening Port | `9617` |
 | HTTP Headers for Attributes | `(?i)(X-.*\|Filename\|Content-Type)` |
 | Return Code | `202` |
@@ -182,7 +182,7 @@ Add `Authorization` with **Properties, +** as a **dynamic property**. It is an H
 | Response Redirects Enabled | `False` |
 | Authorization (dynamic) | `${registry.auth.header}` |
 
-Add **SSL Context Service** = `RegistryTrust` for a private CA (a 12th property). Leave Request Username, Request Password, the OAuth2 provider and Request Header Attributes Pattern unset: forwarding every attribute could leak tokens. Leave Response Body Attribute Name unset so image bytes are never copied into an attribute. Leave redirects disabled so credentials are never sent to an unexpected host. For a Bearer registry (Quay, GitLab, Harbor) the controller supplies a scoped Bearer token in `registry.auth.header`.
+Add **SSL Context Service** = `RegistryTrust` only when the registry's CA is outside Java's default trust (a 12th property; the live low side leaves it empty). Leave Request Username, Request Password, the OAuth2 provider and Request Header Attributes Pattern unset: forwarding every attribute could leak tokens. Leave Response Body Attribute Name unset so image bytes are never copied into an attribute. Leave redirects disabled so credentials are never sent to an unexpected host. For a Bearer registry (Quay, GitLab, Harbor) the controller supplies a scoped Bearer token in `registry.auth.header`.
 
 #### HashContent (CryptographicHashContent): 0 properties
 
@@ -207,13 +207,23 @@ RouteTransfer sets `registry.retry.max` to the current `registry.retries` plus `
 
 A queue the operator inspects before anything is discarded ends at a **disabled** LogMessage: FlowFiles wait in its input queue with their content and attributes. Enabling it would log each one at WARN and discard it, so the log records every discard. Do not add dynamic attributes.
 
-#### ResendImage (GenerateFlowFile, optional): 3 properties
+#### ResendImage (GenerateFlowFile, optional): 11 properties
+
+The card stands in for the webhook, so it carries the webhook's `X-*` attributes as dynamic properties. [L11](#l11-recover-a-held-or-incomplete-transfer) explains each one and how to compute `X-Sha256`.
 
 | Property | Value |
 |---|---|
 | Custom Text | `{}` |
 | Mime Type | `application/json` |
-| registry.image.reference (dynamic) | Blank while idle; `team/app:1.0` while resending, see [L11](#l11-recover-a-held-or-incomplete-transfer) |
+| registry.image.reference (dynamic) | Blank while idle; `team/app:1.0` while resending |
+| X-Artifact-Type (dynamic) | `container-images-request` |
+| X-Artifact-Format (dynamic) | `json` |
+| X-Sha256 (dynamic) | `44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a` (the sha256 of Custom Text `{}`) |
+| X-Registry (dynamic) | `registry.example.com` |
+| X-Image-Count (dynamic) | `1` |
+| X-CI-Project (dynamic) | `manual-resend` |
+| X-CI-Pipeline-Url (dynamic) | `none` |
+| X-CI-Commit-Sha (dynamic) | `none` |
 
 ### L5. Connections and queue settings
 
@@ -295,11 +305,11 @@ Every FlowFile `ToDiode` emits is one blob or one manifest. Your diode integrati
 
 At work, connect `ToDiode` to your diode sender. The sender configuration is supplied by your diode operator and is not implemented by this port.
 
-For a **same-instance test only**, return to the parent `PLANA` canvas and connect the `ToDiode` port on the low group to the `FromDiode` port on the high group. Name the connection `DiodeStandIn`, use Back Pressure Object Threshold `20` and Size Threshold `20 GB`, and select no relationship. This is a test stand-in, **not a physical data diode**.
+For a **same-instance test only**, return to the parent `ImageTransfer` canvas and connect the `ToDiode` port on the low group to the `FromDiode` port on the high group. Name the connection `DiodeStandIn`, use Back Pressure Object Threshold `20` and Size Threshold `20 GB`, and select no relationship. This is a test stand-in, **not a physical data diode**.
 
 ### L9. Publish the webhook and connect GitLab
 
-The listener URL inside the network is `http://<low-nifi-host>:9617/plana-webhook`. In a cluster, expose a service that targets the ready low NiFi nodes. Publish an HTTPS ingress or reverse-proxy URL such as `https://nifi-low.example.internal/plana-webhook`. Route that **exact path** to backend port 9617 over HTTP, set a 1 MB JSON body cap and allow only your GitLab mirror runner or source IP (example `192.0.2.41/32`). Use a certificate your runner trusts. Do not route to the NiFi UI port. The listener reserves port 9617 on every node, so another listener cannot use it.
+The listener URL inside the network is `http://<low-nifi-host>:9617/image-transfer-webhook`. In a cluster, expose a service that targets the ready low NiFi nodes. Publish an HTTPS ingress or reverse-proxy URL such as `https://nifi-low.example.internal/image-transfer-webhook`. Route that **exact path** to backend port 9617 over HTTP, set a 1 MB JSON body cap and allow only your GitLab mirror runner or source IP (example `192.0.2.41/32`). Use a certificate your runner trusts. Do not route to the NiFi UI port. The listener reserves port 9617 on every node, so another listener cannot use it.
 
 Configure the existing **gitlab-registry-mirror** project (not a standard GitLab project-event webhook; its payload differs):
 
@@ -308,7 +318,7 @@ Configure the existing **gitlab-registry-mirror** project (not a standard GitLab
 | TARGET_REGISTRY | `quay-low.example.internal` (host, without `https://`) |
 | TARGET_REGISTRY_USERNAME | `team+mirror_write` with write access to the low repository |
 | TARGET_REGISTRY_PASSWORD | Sensitive low mirror robot token; masked and protected CI variable |
-| MIRROR_WEBHOOK_URL | `https://nifi-low.example.internal/plana-webhook` |
+| MIRROR_WEBHOOK_URL | `https://nifi-low.example.internal/image-transfer-webhook` |
 | MIRROR_PLATFORM | `linux/amd64` for a small first test; choose all platforms when testing a full index |
 | MIRROR_WEBHOOK_CA_BUNDLE | Optional runner-local PEM CA bundle for a private-CA ingress |
 
@@ -317,18 +327,18 @@ Use the variable environment scope matching your mirror job (the tested job used
 **Manual first request.** Run this on the sender or runner your ingress allows. Put a real small image in the low registry first and obtain its **actual** manifest digest from your registry UI or authenticated tooling. Use the original OCI or Docker media type: asking Quay for only Docker-v2 can convert an OCI manifest and change its hash. Replace all example values; the digest cannot be guessed.
 
 ```sh
-export PLANA_SOURCE_HOST='quay-low.example.internal'
-export PLANA_SOURCE_REPOSITORY='team/app'
-export PLANA_SOURCE_TAG='1.0'
-export PLANA_SOURCE_DIGEST='sha256:<actual-64-hex-manifest-digest>'
-export PLANA_WEBHOOK_URL='https://nifi-low.example.internal/plana-webhook'
+export IMAGE_TRANSFER_SOURCE_HOST='quay-low.example.internal'
+export IMAGE_TRANSFER_SOURCE_REPOSITORY='team/app'
+export IMAGE_TRANSFER_SOURCE_TAG='1.0'
+export IMAGE_TRANSFER_SOURCE_DIGEST='sha256:<actual-64-hex-manifest-digest>'
+export IMAGE_TRANSFER_WEBHOOK_URL='https://nifi-low.example.internal/image-transfer-webhook'
 python3 - <<'PYREQUEST'
 import hashlib, json, os, urllib.request
-body = json.dumps({"registry": os.environ["PLANA_SOURCE_HOST"], "images": [{
-    "repository": os.environ["PLANA_SOURCE_REPOSITORY"],
-    "tag": os.environ["PLANA_SOURCE_TAG"],
-    "digest": os.environ["PLANA_SOURCE_DIGEST"]}]}).encode()
-request = urllib.request.Request(os.environ["PLANA_WEBHOOK_URL"], data=body, method="POST", headers={
+body = json.dumps({"registry": os.environ["IMAGE_TRANSFER_SOURCE_HOST"], "images": [{
+    "repository": os.environ["IMAGE_TRANSFER_SOURCE_REPOSITORY"],
+    "tag": os.environ["IMAGE_TRANSFER_SOURCE_TAG"],
+    "digest": os.environ["IMAGE_TRANSFER_SOURCE_DIGEST"]}]}).encode()
+request = urllib.request.Request(os.environ["IMAGE_TRANSFER_WEBHOOK_URL"], data=body, method="POST", headers={
     "Content-Type": "application/json", "X-Artifact-Type": "container-images-request",
     "X-Sha256": hashlib.sha256(body).hexdigest()})
 with urllib.request.urlopen(request, timeout=30) as response:
@@ -374,43 +384,48 @@ If you do not want to work with layer numbers, **resend the entire image**. Low 
 
 Use the optional `ResendImage` card configured above. It is wired to `PlanTransfer` by connection L17.
 
-**A GenerateFlowFile starts with none of the webhook's attributes.** The real webhook from gitlab-registry-mirror sends its facts as HTTP headers (`X-Sha256`, `X-Artifact-Type` and others), and ListenHTTP turns them into attributes. `ResendImage` bypasses the webhook, so its FlowFile has only `mime.type`, `filename`, `path` and `uuid` plus the dynamic properties you add. Because it has a `registry.image.reference`, PlanTransfer runs in reference mode and reads only the attributes in the next table, so you add exactly these, one dynamic property each, and nothing else:
+**A GenerateFlowFile starts with none of the webhook's attributes.** The real webhook from gitlab-registry-mirror sends its facts as HTTP headers, and ListenHTTP turns each one into an attribute. `ResendImage` bypasses the webhook, so its FlowFile has only `mime.type`, `filename`, `path` and `uuid` plus the dynamic properties you add. Anything downstream that routes on the webhook's `X-*` attributes (for example a RouteOnAttribute testing `${X-Artifact-Type:equals('container-images-request')}`) sends a FlowFile without them to `unmatched`. So the card carries **the full `X-*` set** of the real webhook, plus `registry.image.reference`. Add each as a dynamic property (**Properties, +**), one by one:
 
-| Dynamic property | When | Example value | Read by |
-|---|---|---|---|
-| `registry.image.reference` | Always | `team/app:1.0` | PlanTransfer. Without it PlanTransfer treats the content as a webhook body and fails the FlowFile with `X-Sha256 is missing or is not the sha256 of the body` |
-| `transfer.id` | Optional | `resend-20261015-1` | PlanTransfer, which copies it onto every job. A UUID is made when it is absent |
-| `registry.layers` | Named layers only | `2,3` | PlanTransfer |
-| `registry.check` | Required with `registry.layers` | `a1b2c3d4` | PlanTransfer |
-| `registry.platform` | Optional, with `registry.layers` | `linux/amd64` | PlanTransfer |
+| Dynamic property | Example value | What it is for |
+|---|---|---|
+| `registry.image.reference` | `team/app:1.0` | The image to resend. PlanTransfer reads it and runs in reference mode. Without it PlanTransfer treats the content as a webhook body and fails the FlowFile with `X-Sha256 is missing or is not the sha256 of the body` |
+| `X-Artifact-Type` | `container-images-request` | The value a RouteOnAttribute matches to recognise a transfer request |
+| `X-Artifact-Format` | `json` | The format of the request body. Routing and display only |
+| `X-Sha256` | `44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a` | The sha256 of the content. PlanTransfer checks it only in webhook mode, but a route or a later step can test it. See below |
+| `X-Registry` | `registry.example.com` | The source registry host. Routing and display only |
+| `X-Image-Count` | `1` | The number of images in the request. Routing and display only |
+| `X-CI-Project` | `manual-resend` | The CI project that sent the request. Routing and display only. `manual-resend` marks a hand-made request |
+| `X-CI-Pipeline-Url` | `none` | The CI pipeline link. Routing and display only. `none` when there is no pipeline |
+| `X-CI-Commit-Sha` | `none` | The CI commit. Routing and display only. `none` when there is no commit |
+| `transfer.id` | `resend-20261015-1` | Optional. PlanTransfer copies it onto every job. A UUID is made when it is absent |
 
-PlanTransfer reads none of the webhook headers in this mode, and no RouteOnAttribute sits between `ResendImage` and `PlanTransfer`. If you add a RouteOnAttribute there, add the attribute it tests, or the FlowFile goes to `unmatched` and is not routed. The full webhook header set, how to compute `X-Sha256` for a hand-written body, and every error text are in the [input contract](../reference/contract.md#standing-in-for-the-webhook-with-generateflowfile).
+**Compute `X-Sha256` for the exact Custom Text.** It is the sha256, in lowercase hexadecimal, of the Custom Text bytes. For the text `{}` it is always the value above:
 
-[![Manual replay scheduling, Primary node](../images/plana-replay-primary-node.jpg)](../images/plana-replay-primary-node.jpg)
+```sh
+printf '%s' '{}' | sha256sum | cut -d' ' -f1      # macOS: shasum -a 256
+```
+
+Custom Text must be byte-identical to what you hashed, with no trailing newline or space. If you change Custom Text, compute `X-Sha256` again. The other header values do not depend on the content. The full set and the error texts are in the [input contract](../reference/contract.md#standing-in-for-the-webhook-with-generateflowfile).
+
+[![Manual replay scheduling, Primary node](../images/image-transfer-replay-primary-node.jpg)](../images/image-transfer-replay-primary-node.jpg)
 
 On a cluster, All nodes would generate one request on **each** node. **Primary node** with a batch of one was verified to generate exactly one request per Run Once. On a standalone NiFi the Primary node setting is also appropriate. The card stays stopped; edit it and use **Run Once**, never Start. A stopped generator does not run because you edit it.
 
-Add one dynamic property with **Properties, +**:
+Set one dynamic property, `registry.image.reference` = `team/app:1.0`, and leave the `X-*` set in place. The reference is relative to the configured source registry: enter `repository:tag` without a host or URL. Remove any earlier `registry.layers`, `registry.check` and `registry.platform` properties for whole-image mode. The planner uses its configured Platform Selection.
 
-| Dynamic property | Example value |
-|---|---|
-| registry.image.reference | `team/app:1.0` |
-
-The reference is relative to the configured source registry: enter `repository:tag` without a host or URL. Remove any earlier `registry.layers`, `registry.check` and `registry.platform` properties for whole-image mode. The planner uses its configured Platform Selection.
-
-[![Whole-image resend: one image reference](../images/plana-resend-image-settings.jpg)](../images/plana-resend-image-settings.jpg)
+[![Whole-image resend: one image reference](../images/image-transfer-resend-image-settings.jpg)](../images/image-transfer-resend-image-settings.jpg)
 
 1. Keep normal processing running; leave Hold disabled.
 2. If ResendImage is disabled, right-click it and choose **Enable** so it is stopped. Apply the image reference above.
 3. Right-click ResendImage and choose **Run Once**. Do not click Start.
 4. Check the high side's tag, digest and blob sizes, and that failure and work queues drain. The generator should show one new request, not one per node.
-5. Remove `registry.image.reference` and any selective fields, then **Disable ResendImage**. Starting it with no reference would emit invalid requests repeatedly, and disabling it while idle stops a whole-group start from triggering an accidental resend.
+5. Clear `registry.image.reference` and any selective fields (leave the `X-*` set), then **Disable ResendImage**. Starting it with no reference would emit invalid requests repeatedly, and disabling it while idle stops a whole-group start from triggering an accidental resend.
 
 Whole-image `repository:tag` resolves the tag's **current** digest. If the tag moved, you get the current image, which may not repair an older held manifest. Prefer immutable version tags; use the selective mode below when you need to reject a changed tag. The manual reference bypasses webhook JSON and checksum parsing, but registry and allowlist validation still apply, so restrict who can configure and run the generator.
 
 #### Optional: resend named layers only
 
-For bandwidth-sensitive recovery, read the high-side bulletin's image, platform, layer numbers and eight-character check code. On the same **stopped** ResendImage card add these dynamic properties (all four, one by one, besides the `transfer.id` above if you use it):
+For bandwidth-sensitive recovery, read the high-side bulletin's image, platform, layer numbers and eight-character check code. On the same **stopped** ResendImage card add these dynamic properties, one by one, next to the `X-*` set (and `transfer.id` if you use it):
 
 | Dynamic property | Example value |
 |---|---|
@@ -419,27 +434,27 @@ For bandwidth-sensitive recovery, read the high-side bulletin's image, platform,
 | registry.check | `a1b2c3d4` (exact bulletin code) |
 | registry.platform | `linux/amd64` (exact bulletin platform; optional for a single-platform image) |
 
-Enable, apply, Run Once, clear the four properties, then Disable, with Primary node and a batch of one. The planner refuses a stale check code if the tag moved. Selective replay sends the **small config plus the selected layers**, not a manifest and not the other layers. The existing high-side manifest must still be waiting in its retry queue or in `StaleImages`. If it exhausted its retries into Hold, resending layers alone will not commit it: requeue that manifest with its retry counter reset, or use whole-image mode.
+Enable, apply, Run Once, clear these four properties, then Disable, with Primary node and a batch of one. The planner refuses a stale check code if the tag moved. Selective replay sends the **small config plus the selected layers**, not a manifest and not the other layers. The existing high-side manifest must still be waiting in its retry queue or in `StaleImages`. If it exhausted its retries into Hold, resending layers alone will not commit it: requeue that manifest with its retry counter reset, or use whole-image mode.
 
-[![Selective replay settings from the live proof](../images/plana-replay-layer-settings.jpg)](../images/plana-replay-layer-settings.jpg)
+[![Selective replay settings from the live proof](../images/image-transfer-replay-layer-settings.jpg)](../images/image-transfer-replay-layer-settings.jpg)
 
-Both modes were verified on the live Quay and NiFi pair, including a whole-image Run Once after the unique layer file was removed from active high-side storage; NiFi recreated it with the exact SHA-256 and size. See [the reproducible evidence and proof boundary](plana-recovery-proof.md). No scheduled resend is supplied; recovery is operator-triggered.
+Both modes were verified on the live Quay and NiFi pair, including a whole-image Run Once after the unique layer file was removed from active high-side storage; NiFi recreated it with the exact SHA-256 and size. See [the reproducible evidence and proof boundary](image-transfer-recovery-proof.md). No scheduled resend is supplied; recovery is operator-triggered.
 
 ## High side
 
-The high side writes to the destination registry. It is built on the high NiFi instance, inside a process group named `PLANAHighSide`.
+The high side writes to the destination registry. It is built on the high NiFi instance, inside a process group named `ImageTransferHighSide`.
 
 How it works: the diode delivers one FlowFile per blob or manifest into `FromDiode`. `RouteTransfer` prepares an upload request, `UploadContent` sends the blob bytes, and `RouteTransfer` checks dependencies before it commits a manifest: by digest first, then by tag. A manifest whose layers have not all arrived waits quietly and passes through `RetryTransfer` until they do.
 
 ### High screenshot
 
-Actual screenshot of the running, empty-queue `PLANAHighSide` canvas on 2026-10-15. Click it to open it at full size. The live canvas also shows two cards that are **not part of this build**: `ReceivedFromDiode` (an UpdateAttribute that stamps a provenance event on each arrival) and `RecheckManifestProof` (a disabled test source). The one FlowFile in the `stale` queue is a retained test fixture. The toolbar statistics describe the whole NiFi cluster.
+Actual screenshot of the running `ImageTransferHighSide` canvas. Click it to open it at full size. Connection labels are the queue names. The toolbar statistics describe the whole NiFi cluster.
 
-[![PLANA high-side canvas](../images/plana-high-side.jpg)](../images/plana-high-side.jpg)
+[![Image transfer high-side canvas](../images/image-transfer-high-side.jpg)](../images/image-transfer-high-side.jpg)
 
 ### H1. Create the group, parameters and optional trust
 
-On the high NiFi instance, create a **Process Group** named `PLANAHighSide` and build everything below inside it. Open **Global menu, Parameter Contexts, +** and create a context holding only the destination-side parameters. Bind it with **PLANAHighSide, Configure, Parameter Context**. Do not copy source credentials here.
+On the high NiFi instance, create a **Process Group** named `ImageTransferHighSide` and build everything below inside it. Open **Global menu, Parameter Contexts, +** and create a context holding only the destination-side parameters. Bind it with **ImageTransferHighSide, Configure, Parameter Context**. Do not copy source credentials here.
 
 | Parameter | Sensitive | Example value / purpose |
 |---|---|---|
@@ -466,7 +481,7 @@ keytool -importcert -noprompt -alias registry-ca -file /path/to/registry-ca.pem 
   -keystore /opt/nifi/certs/registry-trust.p12 -storetype PKCS12
 ```
 
-Let keytool prompt for the password and put that password in `truststore_password`. Import any intermediate CA with its own alias. Native **InvokeHTTP replaces its trust configuration when you select an SSL Context Service**, so the truststore must hold every CA needed for the registry chain. Never disable TLS verification. Select `RegistryTrust` on **both** `RouteTransfer` and `UploadContent`. If it is only on `RouteTransfer`, the controller's HEAD and upload-start POST succeed but every `UploadContent` PUT fails with `PKIX path building failed`, so the registry shows started uploads and no layers. Registry mutual TLS (client certificates) is outside this tested flow.
+Let keytool prompt for the password and put that password in `truststore_password`. Import any intermediate CA with its own alias. Native **InvokeHTTP replaces its trust configuration when you select an SSL Context Service**, so the truststore must hold every CA needed for the registry chain. Never disable TLS verification. `UploadContent` trusts Java's default CAs while its SSL Context Service is empty, which is enough when the registry's certificate chains to one of them (the live high side leaves it empty). Select `RegistryTrust` on `UploadContent` when the registry's CA is outside Java's default trust. With the service only on `RouteTransfer`, the controller's HEAD and upload-start POST succeed but every `UploadContent` PUT fails with `PKIX path building failed`, so the registry shows started uploads and no layers. Registry mutual TLS (client certificates) is outside this tested flow.
 
 ### H2. Add the cards
 
@@ -537,7 +552,7 @@ Add `Authorization` with **Properties, +** as a **dynamic property**. It is an H
 | Response Redirects Enabled | `False` |
 | Authorization (dynamic) | `${registry.auth.header}` |
 
-Add **SSL Context Service** = `RegistryTrust` for a private CA (a 12th property). Leave Request Username, Request Password and the OAuth2 provider unset for a Bearer registry (Quay, GitLab, Harbor): the controller supplies a scoped Bearer token in `registry.auth.header`. Leave Request Header Attributes Pattern unset: forwarding every attribute could leak tokens. Leave redirects disabled so credentials are never sent to an unexpected host.
+Add **SSL Context Service** = `RegistryTrust` only when the registry's CA is outside Java's default trust (a 12th property; the live high side leaves it empty). Leave Request Username, Request Password and the OAuth2 provider unset for a Bearer registry (Quay, GitLab, Harbor): the controller supplies a scoped Bearer token in `registry.auth.header`. Leave Request Header Attributes Pattern unset: forwarding every attribute could leak tokens. Leave redirects disabled so credentials are never sent to an unexpected host.
 
 **Basic-auth registry** (`registry:2` with htpasswd): the controller never writes Basic credentials to an attribute, so it sends an empty `Authorization`, and InvokeHTTP adds Basic itself. Set **Request Username** and **Request Password** to the same account as RouteTransfer (`#{dst_user}`, `#{dst_password}`), and **delete the `Authorization` dynamic property**. InvokeHTTP sends a header even when its value is empty, so with the property present the request carries two `Authorization` headers, one empty and one Basic. A registry behind ingress-nginx over HTTP/2 rejects that with HTTP 400 before the registry sees it, and the controller then routes every blob to `failure`. Restore the dynamic property and clear the two request credentials when you go back to a Bearer registry.
 
@@ -616,20 +631,20 @@ Place `FromDiode` and `RouteTransfer` in one vertical column with Hold at the bo
 
 | Card | X | Y |
 |---|---|---|
-| FromDiode | 568 | 0 |
-| RouteTransfer | 0 | 480 |
-| UploadContent | -512 | 720 |
-| RetryTransfer | 0 | 720 |
-| StaleImages | 512 | 720 |
-| Hold | 0 | 960 |
+| FromDiode | 56 | 0 |
+| RouteTransfer | 0 | 160 |
+| UploadContent | -512 | 400 |
+| RetryTransfer | 0 | 400 |
+| StaleImages | 512 | 400 |
+| Hold | 0 | 640 |
 
-(The live canvas leaves the space beside `FromDiode` and the rows above `RouteTransfer` for its two extra cards, so you can close that gap if you do not add them.) Put the long return connections in separate outer lanes and keep labels clear of cards. The [high flow spec](../flows/compact-layer-high-mcp-spec.json) is a **NiFi MCP flow spec**, not a native NiFi UI import file. It omits credentials and trust services; bind your context, set trust if needed, and disable Hold and StaleImages before starting an imported flow. Automatic layout can replace manual bends.
+Put the long return connections in separate outer lanes and keep labels clear of cards. The [high flow spec](../flows/compact-layer-high-mcp-spec.json) is a **NiFi MCP flow spec**, not a native NiFi UI import file. It omits credentials and trust services; bind your context, set trust if needed, and disable Hold and StaleImages before starting an imported flow. Automatic layout can replace manual bends.
 
 ### H8. Receive from the diode
 
 Your diode receiver must deliver every FlowFile to `FromDiode` with its **exact bytes and attributes**, including `registry.kind`, `repository`, `digest`, `size`, `media.type`, `reference`, `needs`, `image`, `platform`, `check` and `layer.count` (all with the `registry.` prefix), and `content_SHA-256`. Do not strip job facts. Delivery may be in any order: manifests wait for their dependencies. The receiver configuration is supplied by your diode operator and is not implemented by this port.
 
-For a **same-instance test only**, the low `ToDiode` port is connected to this `FromDiode` port on the parent `PLANA` canvas by a connection named `DiodeStandIn` with Back Pressure Object Threshold `20` and Size Threshold `20 GB` and no relationship. This is a test stand-in, **not a physical data diode**. The registry URL, user and password on this side come from the high parameter context; no source credential is ever copied here.
+For a **same-instance test only**, the low `ToDiode` port is connected to this `FromDiode` port on the parent `ImageTransfer` canvas by a connection named `DiodeStandIn` with Back Pressure Object Threshold `20` and Size Threshold `20 GB` and no relationship. This is a test stand-in, **not a physical data diode**. The registry URL, user and password on this side come from the high parameter context; no source credential is ever copied here.
 
 ### H9. Start and verify the high side
 
@@ -661,4 +676,4 @@ Keep failed bytes in place while you read the bulletin and `registry.error`. Do 
 | Exhausted network retries | Fix registry or network trouble; the low side submits the same trusted request again, and blobs already present on high are deduplicated |
 | Stalled large blob | Check content disk, queue byte threshold, ingress and registry timeouts, and active InvokeHTTP tasks before raising concurrency |
 
-The low side resends by image and tag (or by layer numbers and check code) using its `ResendImage` card. The high side needs no change for a resend: it skips blobs it already holds and uploads the missing ones. A resent manifest also repairs an earlier manifest that exhausted its retries into Hold. See [the reproducible evidence and proof boundary](plana-recovery-proof.md).
+The low side resends by image and tag (or by layer numbers and check code) using its `ResendImage` card. The high side needs no change for a resend: it skips blobs it already holds and uploads the missing ones. A resent manifest also repairs an earlier manifest that exhausted its retries into Hold. See [the reproducible evidence and proof boundary](image-transfer-recovery-proof.md).
