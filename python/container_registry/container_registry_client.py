@@ -232,6 +232,11 @@ class RegistryClient:
         context = ssl.create_default_context()  # system store, and SSL_CERT_FILE when set
         for der in ca_der or ():
             context.load_verify_locations(cadata=bytes(der))  # one DER certificate each, added to the system store
+        if ca_der:
+            # Python 3.13 sets VERIFY_X509_STRICT, which rejects a private CA without the key usage extension
+            # ("CA cert does not include key usage extension"), as a quick `openssl req -x509` CA is.
+            # Trust still comes only from the system store and these CAs.
+            context.verify_flags &= ~getattr(ssl, "VERIFY_X509_STRICT", 0)
         self.pins = {}  # host name -> the addresses its first connection saw it resolve to
         self.opener = web_opener(context, self._check_pinned)
         self.trusted_names, self.trusted_nets = set(), []
