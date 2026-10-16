@@ -84,15 +84,9 @@
       "name": "FetchBlob",
       "processor_type": "org.apache.nifi.processors.standard.InvokeHTTP",
       "properties": {
-        "HTTP Method": "${registry.http.method}",
+        "HTTP Method": "GET",
         "HTTP URL": "${registry.http.url}",
-        "Request Body Enabled": "false",
-        "Request Content-Type": "${registry.http.media.type}",
         "Authorization": "${registry.auth.header}",
-        "Response Header Request Attributes Enabled": "true",
-        "Response Header Request Attributes Prefix": "resp.",
-        "Response Body Ignored": "false",
-        "Response Redirects Enabled": "False",
         "Connection Timeout": "30 secs",
         "Socket Read Timeout": "10 mins",
         "Socket Write Timeout": "10 mins"
