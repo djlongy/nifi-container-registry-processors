@@ -95,6 +95,8 @@ The NiFi 2.x Python API cannot stream: content is one `bytes` object and about 1
 
 The diode transfer is the [image transfer flow](docs/runbooks/image-transfer-build-by-hand.md), which supersedes O2, O3 and O4: PlanRegistryTransfer and RouteRegistryTransfer with native InvokeHTTP, one FlowFile per blob and manifest. O1 is the tar flow of Pull, Export and Push on one NiFi. Validate the chosen option before a release.
 
+In that flow both InvokeHTTP cards take every request from attributes RouteRegistryTransfer writes per FlowFile: HTTP URL is `${registry.http.url}` and Authorization is `${registry.auth.header}`. Never put the registry address in HTTP URL: each blob and manifest has its own URL.
+
 ### One tar per image
 
 Tar Per Image `false` (default) writes one tar for the whole webhook, with shared layers stored once. `true` writes one tar per image, so shared base layers repeat in each and more bytes cross the diode: measured with 2 images sharing 4 of 5 layers, 1.92 times the bytes of one tar. That is the trade-off for routing, retrying and tracking each image alone. Max Export Size counts each distinct blob digest once per tar, so in one-tar mode a layer shared by two images counts once (a 48.3 MB bundle passes a 60 MB limit) and with `true` each image is measured on its own. All checks run on the whole webhook first, and if any image or any write fails in a way Export handles, nothing is left in Tar Output Directory. That holds only for handled failures: after a crash or kill Export leaves `.<name>.partial` and Push leaves `<name>.pushing-<id>`. Delete them by hand, or run the cleanup flow under "Clean up leftover files" below.
