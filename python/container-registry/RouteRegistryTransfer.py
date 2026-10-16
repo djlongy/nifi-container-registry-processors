@@ -15,6 +15,7 @@ from nifi_attributes import Attributes, evaluate
 STAGE = 'registry.stage'
 AUTH_HEADER = 'registry.auth.header'
 HTTP_STATUS = 'invokehttp.status.code'
+RESPONSE_URL = 'invokehttp.response.url'
 REGISTRY_PREFIX = 'registry.'
 MEDIA_TYPE = 'media.type'
 ERROR = 'registry.error'
@@ -177,7 +178,8 @@ class RouteRegistryTransfer(FlowFileTransform):
             return self._finish("complete")
         status = int(flowfile.getAttribute(HTTP_STATUS) or "0")
         if side == "Low" and stage == "fetch" and status == 200:
-            return self._result("unverified", {STAGE: "verify", AUTH_HEADER: "", **self.FRESH_RETRIES})
+            # A followed redirect leaves the storage URL, often pre-signed, in this attribute; it must not cross the diode.
+            return self._result("unverified", {STAGE: "verify", AUTH_HEADER: "", RESPONSE_URL: "", **self.FRESH_RETRIES})
         if side != "High" or status != 201:
             return self._http_failure(flowfile, stage, status)
         if facts["kind"] in ("manifest", "index"):

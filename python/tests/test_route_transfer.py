@@ -148,6 +148,13 @@ class TransferController(unittest.TestCase):
                 self.assertEqual(result.relationship, "failure")
                 self.assertIsNone(result.contents)
 
+    def test_a_followed_storage_redirect_leaves_no_signed_url_for_the_diode(self):
+        signed = "https://storage.example/blob?X-Amz-Signature=secret"
+        attrs = {**self.facts(), "registry.stage": "fetch", "invokehttp.status.code": "200", "invokehttp.response.url": signed}
+        result = self.run_flow("Low", attrs)
+        self.assertEqual(result.relationship, "unverified")
+        self.assertEqual(result.attributes["invokehttp.response.url"], "")
+
     def test_high_side_dedupes_without_reading_content(self):
         self.registry.status = 200
         result = self.run_flow("High", self.facts())
