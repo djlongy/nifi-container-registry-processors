@@ -426,3 +426,26 @@ class Pagination(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UploadLocationRepository(unittest.TestCase):
+    """An upload goes to the repository it was started for, whatever the registry's Location says."""
+    @staticmethod
+    def location(requested, header, url="https://registry.example.internal"):
+        response = mock.Mock(headers={"Location": header})
+        return c.RegistryClient(url)._upload_location(response, requested)
+
+    def test_a_location_in_the_requested_repository_is_kept(self):
+        for header in ("/v2/team/app/blobs/uploads/id?_state=x",
+                       "https://registry.example.internal/v2/team/app/blobs/uploads/id?_state=x"):
+            self.assertEqual(self.location("team/app", header),
+                             "https://registry.example.internal/v2/team/app/blobs/uploads/id?_state=x")
+
+    def test_a_location_in_another_repository_of_the_registry_is_refused(self):
+        with self.assertRaises(c.RegistryError) as raised:
+            self.location("itis-dev/library/busybox", "/v2/library/busybox/blobs/uploads/id?_state=x")
+        self.assertIn("library/busybox", str(raised.exception))
+
+    def test_a_location_on_another_host_is_left_to_the_host_check(self):
+        header = "https://storage.example.internal/v2/other/blobs/uploads/id"
+        self.assertEqual(self.location("team/app", header), header)

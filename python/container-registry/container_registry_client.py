@@ -43,6 +43,7 @@ MEDIA_TYPE = re.compile(r"[\w.+-]+/[\w.+-]+")
 CHUNK = 8 * 1024 * 1024
 MANIFEST_LIMIT = 4 * 1024 * 1024    # the largest manifest the distribution spec asks registries to accept
 CONTROL_LIMIT = 16 * 1024 * 1024    # token, listing and upload answers, which are small
+UPLOADS = "/blobs/uploads/"
 UPLOAD_ATTEMPTS = 3  # a blob upload that fails mid-stream starts again from the tar this many times
 FOREIGN_LAYERS = {
     "application/vnd.docker.image.rootfs.foreign.diff.tar.gzip",
@@ -451,20 +452,25 @@ class RegistryClient:
 
     # -- writes ------------------------------------------------------------------------------
     def _upload_location(self, response, repository):
-        location = urllib.parse.urljoin(f"{self.base}/v2/{repository}/blobs/uploads/", response.headers.get("Location", ""))
+        location = urllib.parse.urljoin(f"{self.base}/v2/{repository}{UPLOADS}", response.headers.get("Location", ""))
         if not location:
             raise RegistryError("upload started without a Location header")
         parts = urllib.parse.urlsplit(location)
+        own = parts.netloc == self.host and parts.path.startswith("/v2/") and UPLOADS in parts.path
         # Artifactory's /artifactory/api/docker/<repo-key> base answers with a Location that drops that path.
-        if self.base_path and parts.netloc == self.host and parts.path.startswith("/v2/") and "/blobs/uploads/" in parts.path:
-            upload_id = parts.path.split("/blobs/uploads/", 1)[1]
-            location = f"{self.base}/v2/{repository}/blobs/uploads/{upload_id}" + (f"?{parts.query}" if parts.query else "")
+        if own and self.base_path:
+            upload_id = parts.path.split(UPLOADS, 1)[1]
+            return f"{self.base}/v2/{repository}{UPLOADS}{upload_id}" + (f"?{parts.query}" if parts.query else "")
+        if own:
+            named = urllib.parse.unquote(parts.path[len("/v2/"):].split(UPLOADS, 1)[0])
+            if named != repository:  # the registry would store the blob where the manifest check does not look
+                raise RegistryError(f"upload Location names repository {named}, not {repository}")
         return location
 
     def start_upload(self, repository, digest=None, mount_from=None):
         """The upload URL, or None when the registry mounted the blob from mount_from."""
         query = f"?mount={urllib.parse.quote(digest)}&from={urllib.parse.quote(mount_from)}" if mount_from else ""
-        response = self._send(repository, "pull,push", "POST", f"{repository}/blobs/uploads/{query}",
+        response = self._send(repository, "pull,push", "POST", f"{repository}{UPLOADS}{query}",
                               {"Content-Length": "0"}, b"", mount_from)
         if mount_from and response.status == 201:
             read_limited(response, CONTROL_LIMIT, f"mount into {repository}")
