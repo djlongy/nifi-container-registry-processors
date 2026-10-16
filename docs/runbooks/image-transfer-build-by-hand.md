@@ -164,25 +164,26 @@ This splits the small job JSON, never a downloaded blob.
 | `failure` | A permanent condition, content kept (also used if the processor raises) | LogMessage |
 | `waiting`, `stale` | Used on the high side only | Auto-terminate |
 
-#### InvokeHTTP: 11 properties
+#### InvokeHTTP: 6 properties
 
 Add `Authorization` with **Properties, +** as a **dynamic property**. It is an HTTP header, not Request Username/Password and not the OAuth2 provider.
 
 | Property | Value |
 |---|---|
-| HTTP Method | `${registry.http.method}` |
+| HTTP Method | `GET` |
 | HTTP URL | `${registry.http.url}` |
 | Connection Timeout | `30 secs` |
 | Socket Read Timeout | `10 mins` |
 | Socket Write Timeout | `10 mins` |
-| Request Body Enabled | `false` |
-| Request Content-Type | `${registry.http.media.type}` |
-| Response Header Request Attributes Enabled | `true` |
-| Response Header Request Attributes Prefix | `resp.` |
-| Response Redirects Enabled | `False` |
 | Authorization (dynamic) | `${registry.auth.header}` |
 
-Add **SSL Context Service** = `RegistryTrust` only when the registry's CA is outside Java's default trust (a 12th property; the live low side leaves it empty). Leave Request Username, Request Password, the OAuth2 provider and Request Header Attributes Pattern unset: forwarding every attribute could leak tokens. Leave Response Body Attribute Name unset so image bytes are never copied into an attribute. Leave redirects disabled so credentials are never sent to an unexpected host. For a Bearer registry (Quay, GitLab, Harbor) the controller supplies a scoped Bearer token in `registry.auth.header`.
+Add **SSL Context Service** = `RegistryTrust` only when the registry's CA is outside Java's default trust (a 7th property; the live low side leaves it empty). Leave Request Username, Request Password, the OAuth2 provider and Request Header Attributes Pattern unset: forwarding every attribute could leak tokens. Leave Response Body Attribute Name unset so image bytes are never copied into an attribute. For a Bearer registry (Quay, GitLab, Harbor) the controller supplies a scoped Bearer token in `registry.auth.header`.
+
+**Type `GET`, not `${registry.http.method}`.** The low controller only ever asks for `GET`. NiFi shows the request-body properties (Request Body Enabled, Request Content-Type, Request Chunked Transfer-Encoding Enabled, Request Content-Encoding, Request Multipart Form-Data Name) only while HTTP Method is literally `PATCH`, `POST` or `PUT`. With an expression such as `${registry.http.method}` they are hidden. On the low side they do not matter, because a `GET` sends no body, so they stay hidden at their defaults (body enabled, Request Content-Type `${mime.type}`, no chunking, no content encoding) and are never used. RouteRegistryTransfer still writes `registry.http.method`; a literal method makes InvokeHTTP ignore it. Four more properties appear only after another one is set, and stay at their defaults: Request Digest Authentication Enabled (after Request Username), Response Body Attribute Size (after Response Body Attribute Name), OAuth2 Access Token Refresh Strategy (after the OAuth2 provider) and Response Cache Size (after Response Cache Enabled).
+
+**Redirects stay at their default `True`.** A registry that keeps blobs in object storage answers the blob `GET` with a `302` or `307` to the storage host. With Response Redirects Enabled `False`, InvokeHTTP stops at that answer, the controller sees status `307`, and the FlowFile is held as `native fetch refused (HTTP 307)`: no layer is ever fetched, while manifests and registries that serve blobs directly still work. With `True`, InvokeHTTP follows the redirect, and the Bearer token does not go with it: OkHttp 5.5.0, the client in NiFi 2.12.0, removes the `Authorization` header whenever a redirect changes host, port or scheme (`RetryAndFollowUpInterceptor.buildRedirectRequest`, `if (!userResponse.request.url.canReuseConnectionFor(url)) requestBuilder.removeHeader("Authorization")`). That is the only header it removes, so add no other credential header to this card. The bytes are still checked against the planned SHA-256 and size before they leave the side. The source registry chooses the storage URL, and InvokeHTTP does not apply the controller's public-address check to it, so run the low side only against a source registry you trust.
+
+**Response headers are not read on the low side.** RouteRegistryTransfer reads only `invokehttp.status.code` after a download, so Response Header Request Attributes Enabled stays `false` here ([what `resp.` is for](#what-resp-is-for) is on the high side).
 
 #### CryptographicHashContent: 0 properties
 
@@ -372,6 +373,7 @@ Keep failed bytes in place while you read the bulletin and `registry.error`. Do 
 | PKIX or certificate failure | Configure CA trust separately for the Python processors and for InvokeHTTP; a selected Java truststore replaces native defaults |
 | 401 or 403 | Check robot repository permissions and token; network retries do not repair missing permissions |
 | Checksum, registry or allowlist failure | Fix the request or context and send a corrected request; inspect the retained original |
+| `native fetch refused (HTTP 307)` or `302` | The source registry serves blobs from object storage and FetchBlob has Response Redirects Enabled `False`. Set it to `True` (the default) |
 | Hash or size mismatch | Keep the bytes; resend from the trusted source rather than accepting the mismatch |
 | A `failure` queue into LogMessage shows 20 queued and the side stops | Back pressure: each LogMessage queue stops its source at 20 FlowFiles. Read `registry.error` on the held FlowFiles, fix the cause, then empty or replay the queue. Alert on any FlowFile in a LogMessage queue so it is seen at 1, not at 20 |
 | Exhausted network retries | Fix registry or network trouble, then submit the same trusted request again; blobs already on the high side are deduplicated |
@@ -558,7 +560,7 @@ Add `Authorization` with **Properties, +** as a **dynamic property**. It is an H
 
 | Property | Value |
 |---|---|
-| HTTP Method | `${registry.http.method}` |
+| HTTP Method | `PUT` |
 | HTTP URL | `${registry.http.url}` |
 | Connection Timeout | `30 secs` |
 | Socket Read Timeout | `10 mins` |
@@ -570,9 +572,15 @@ Add `Authorization` with **Properties, +** as a **dynamic property**. It is an H
 | Response Redirects Enabled | `False` |
 | Authorization (dynamic) | `${registry.auth.header}` |
 
-Add **SSL Context Service** = `RegistryTrust` only when the registry's CA is outside Java's default trust (a 12th property; the live high side leaves it empty). Leave Request Username, Request Password and the OAuth2 provider unset for a Bearer registry (Quay, GitLab, Harbor): the controller supplies a scoped Bearer token in `registry.auth.header`. Leave Request Header Attributes Pattern unset: forwarding every attribute could leak tokens. Leave redirects disabled so credentials are never sent to an unexpected host.
-
+Add **SSL Context Service** = `RegistryTrust` only when the registry's CA is outside Java's default trust (a 12th property; the live high side leaves it empty). Leave Request Username, Request Password and the OAuth2 provider unset for a Bearer registry (Quay, GitLab, Harbor): the controller supplies a scoped Bearer token in `registry.auth.header`. Leave Request Header Attributes Pattern unset: forwarding every attribute could leak tokens. 
 **Basic-auth registry** (`registry:2` with htpasswd): the controller never writes Basic credentials to an attribute, so it sends an empty `Authorization`, and InvokeHTTP adds Basic itself. Set **Request Username** and **Request Password** to the same account as RouteRegistryTransfer (`#{dst_user}`, `#{dst_password}`), and **delete the `Authorization` dynamic property**. InvokeHTTP sends a header even when its value is empty, so with the property present the request carries two `Authorization` headers, one empty and one Basic. A registry behind ingress-nginx over HTTP/2 rejects that with HTTP 400 before the registry sees it, and the controller then routes every blob to `failure`. Restore the dynamic property and clear the two request credentials when you go back to a Bearer registry.
+
+**Type `PUT`, not `${registry.http.method}`.** Every native request on the high side is a `PUT` (blob upload, manifest by digest, manifest by tag): the controller makes the `HEAD` and `POST` requests itself. NiFi shows Request Body Enabled, Request Content-Type, Request Chunked Transfer-Encoding Enabled, Request Content-Encoding and Request Multipart Form-Data Name only while HTTP Method is literally `PATCH`, `POST` or `PUT`. With `${registry.http.method}` they are hidden, so Request Content-Type cannot be set in the UI. A hidden property keeps working: the body is still sent, and Request Content-Type takes its default `${mime.type}`. That default sends blobs as `application/octet-stream`, but a manifest as the `mime.type` of its FlowFile, typically `application/json`, and the registry answers `400`, held as `native manifest-digest refused (HTTP 400)`. With the literal `PUT` the row above is visible and the manifest leaves with its own media type. The properties that stay hidden at `PUT` appear only after another one is set, and stay at their defaults: Request Digest Authentication Enabled (after Request Username), Response Body Attribute Size, OAuth2 Access Token Refresh Strategy and Response Cache Size. Request Body Enabled (`true`), Request Chunked Transfer-Encoding Enabled (`false`), Request Content-Encoding (`DISABLED`) and Request Multipart Form-Data Name (empty) are visible and stay at their defaults.
+
+**Redirects stay `False` on the upload.** The registries this flow writes to answer an upload `PUT` and a manifest `PUT` with `201` themselves; redirects to object storage belong to blob reads. With `True`, OkHttp follows a `307` or `308` on a `PUT` with the full body, to any host the registry names, without the `Authorization` header and past the checks the controller applies to the upload `Location`. A `301`, `302` or `303` turns the `PUT` into a `GET` without a body. With `False`, a redirected upload stops at the redirect, and the FlowFile is held as `native upload refused (HTTP 307)`, which tells the operator the registry is not a plain Distribution registry. A redirected blob `HEAD` is read by the controller as "the blob exists".
+
+<a id="what-resp-is-for"></a>
+**What `resp.` is for.** Response Header Request Attributes Prefix is the text InvokeHTTP puts in front of each response header it copies onto the original FlowFile: with `resp.`, the header `Docker-Content-Digest` becomes the attribute `resp.Docker-Content-Digest`. Both properties are visible once Response Header Request Attributes Enabled is `true`. After a manifest `PUT`, RouteRegistryTransfer reads `resp.Docker-Content-Digest` or `resp.docker-content-digest` (a registry reached over HTTP/2, such as `registry:2`, sends lower-case header names) and compares it with the planned digest. When neither attribute exists, it asks the registry with a `HEAD` request for the manifest and compares that digest. The prefix must be exactly `resp.` because the controller looks up those two names. The setting is optional on the high side: leaving it off costs one extra `HEAD` per manifest `PUT`, and the transfer completes. It is not used on the low side.
 
 #### RetryFlowFile: 2 properties
 
@@ -690,6 +698,9 @@ Keep failed bytes in place while you read the bulletin and `registry.error`. Do 
 | Image never appears; one warning `... incomplete: missing layers N of M ... moved to stale` | Layers were lost across the diode. The manifest is in `LogMessage (stale)`. Ask the low side to resend the image or the named layers, then move the stale manifest back to RouteRegistryTransfer (or let the resent manifest commit). A replayed stale manifest starts a fresh wait |
 | Missing layers on high | Read the human image, platform, layer numbers and check code from the bulletin, and give them to the low side to resend |
 | Registry shows upload POSTs but no layer PUTs | InvokeHTTP cannot reach the registry. Causes: no `RegistryTrust` on it (`PKIX path building failed`); a Basic registry without Request Username and Password (HTTP 401); or a Basic registry where InvokeHTTP still has the `Authorization` dynamic property (HTTP 400 from the proxy, logged by ingress-nginx as request `"-"`). The controller logs each retry reason as a warning bulletin |
+| The manifest keeps waiting with `missing layers`, though the registry holds the layers under another repository | A registry keeps blobs per repository, and a `HEAD` for a layer answers `404` unless that repository holds it. RouteRegistryTransfer reads Target Repository for every FlowFile when it handles it, so layers uploaded while it held one value are not found by a manifest checked while it holds another. Keep the Target Repository value (or its parameter) the same from the first layer to the committed tag, then resend the whole image; layers already in the target repository are skipped |
+| `native upload refused (HTTP 307)` | The registry redirects the upload `PUT`. Redirects stay `False` here on purpose ([why](#h4-enter-the-properties)); use a registry that accepts the upload itself |
+| `native manifest-digest refused (HTTP 400)` | HTTP Method is `${registry.http.method}`, which hides Request Content-Type, so the manifest leaves as `application/json`. Set HTTP Method to `PUT` and Request Content-Type to `${registry.http.media.type}` |
 | Foreign upload URL | Refused by this controller; use a compatible registry or a separately reviewed transfer option |
 | 401 or 403 | Check robot repository permissions and token; retries do not repair missing permissions |
 | PKIX or certificate failure | Configure CA trust separately for RouteRegistryTransfer and InvokeHTTP; a selected Java truststore replaces native defaults |

@@ -34,9 +34,8 @@
       "name": "UploadContent",
       "processor_type": "org.apache.nifi.processors.standard.InvokeHTTP",
       "properties": {
-        "HTTP Method": "${registry.http.method}",
+        "HTTP Method": "PUT",
         "HTTP URL": "${registry.http.url}",
-        "Request Body Enabled": "true",
         "Request Content-Type": "${registry.http.media.type}",
         "Authorization": "${registry.auth.header}",
         "Response Header Request Attributes Enabled": "true",
