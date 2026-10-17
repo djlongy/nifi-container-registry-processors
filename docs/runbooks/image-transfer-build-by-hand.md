@@ -318,9 +318,9 @@ Configure the existing **gitlab-registry-mirror** project (not a standard GitLab
 
 | CI/CD variable | Example value |
 |---|---|
-| TARGET_REGISTRY | `quay-low.example.internal` (host, without `https://`) |
-| TARGET_REGISTRY_USERNAME | `team+mirror_write` with write access to the low repository |
-| TARGET_REGISTRY_PASSWORD | Sensitive low mirror robot token; masked and protected CI variable |
+| MIRROR_REGISTRY | `quay-low.example.internal` (host, without `https://`) |
+| MIRROR_REGISTRY_USERNAME | `team+mirror_write` with write access to the low repository |
+| MIRROR_REGISTRY_PASSWORD | Sensitive low mirror robot token; masked and protected CI variable |
 | MIRROR_WEBHOOK_URL | `https://nifi-low.example.internal/image-transfer-webhook` |
 | MIRROR_PLATFORM | `linux/amd64` for a small first test; choose all platforms when testing a full index |
 | MIRROR_WEBHOOK_CA_BUNDLE | Optional runner-local PEM CA bundle for a private-CA ingress |
