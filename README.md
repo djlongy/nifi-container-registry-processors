@@ -57,7 +57,7 @@ the diode -> RouteOnAttribute ${X-Artifact-Type:equals('container-images')}
   -> PutFile (Directory /data/in) -> PushContainerImages (Input Tar Path /data/in/${filename}, Delete Input Tar true)
 ```
 
-Webhook, driven by gitlab-registry-mirror (`MIRROR_WEBHOOK_URL`):
+Webhook, driven by gitlab-registry-mirror (`MIRROR_REQUEST_URL`):
 
 ```text
 ListenHTTP -> RouteOnAttribute ${X-Artifact-Type:equals('container-images-request')}

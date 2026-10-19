@@ -321,11 +321,11 @@ Configure the existing **gitlab-registry-mirror** project (not a standard GitLab
 | MIRROR_REGISTRY | `quay-low.example.internal` (host, without `https://`) |
 | MIRROR_REGISTRY_USERNAME | `team+mirror_write` with write access to the low repository |
 | MIRROR_REGISTRY_PASSWORD | Sensitive low mirror robot token; masked and protected CI variable |
-| MIRROR_WEBHOOK_URL | `https://nifi-low.example.internal/image-transfer-webhook` |
+| MIRROR_REQUEST_URL | `https://nifi-low.example.internal/image-transfer-webhook` |
 | MIRROR_PLATFORM | `linux/amd64` for a small first test; choose all platforms when testing a full index |
-| MIRROR_WEBHOOK_CA_BUNDLE | Optional runner-local PEM CA bundle for a private-CA ingress |
+| MIRROR_REQUEST_CA_BUNDLE | Optional runner-local PEM CA bundle for a private-CA ingress |
 
-Use the variable environment scope matching your mirror job (the tested job used `mirror-low`). Add a reviewed, pinned small image to `images.txt`, run the pipeline and check its sync job. The mirror posts only when it **copies a changed tag**; retrying an already-synced pipeline normally sends no new webhook. Use a new tag or the manual request below. HTTP 202 means the listener accepted the request, not that the transfer succeeded. This ListenHTTP flow does not validate `MIRROR_WEBHOOK_TOKEN`; enforce authentication at your ingress if required, and do not log credential headers.
+Use the variable environment scope matching your mirror job (the tested job used `mirror-low`). Add a reviewed, pinned small image to `images.txt`, run the pipeline and check its sync job. Each sync posts one request naming every synced image the mirror's ledger has not yet requested, whether or not that run copied it; a second run with nothing new posts nothing. To send images again, run the pipeline with `MIRROR_RESEND_IMAGES` (images or `images.txt` lines, one per line) or `MIRROR_RESEND_ALL=true`, or run `mirror.py request IMAGE...` (`-T FILE` for a list) where `MIRROR_REQUEST_URL` reaches the listener. HTTP 202 means the listener accepted the request, not that the transfer succeeded. This ListenHTTP flow does not validate `MIRROR_REQUEST_TOKEN`; enforce authentication at your ingress if required, and do not log credential headers.
 
 **Manual first request.** Run this on the sender or runner your ingress allows. Put a real small image in the low registry first and obtain its **actual** manifest digest from your registry UI or authenticated tooling. Use the original OCI or Docker media type: asking Quay for only Docker-v2 can convert an OCI manifest and change its hash. Replace all example values; the digest cannot be guessed.
 

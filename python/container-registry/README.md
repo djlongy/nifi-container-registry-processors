@@ -137,7 +137,7 @@ RouteOnAttribute ${X-Artifact-Type:equals('container-images')}
      success -> done   failure -> a stopped processor, to inspect registry.error   original -> auto-terminate
 ```
 
-Low side, driven by the gitlab-registry-mirror webhook (`MIRROR_WEBHOOK_URL`) instead of a schedule:
+Low side, driven by the gitlab-registry-mirror webhook (`MIRROR_REQUEST_URL`) instead of a schedule:
 
 ```text
 ListenHTTP
