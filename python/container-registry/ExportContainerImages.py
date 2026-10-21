@@ -59,7 +59,7 @@ class ExportContainerImages(FlowFileTransform):
         name="Source Registry Password",
         description=(
             "Password or access token for the source registry. Empty (default): none sent. Sensitive:"
-            " reference a parameter, such as #{gitlab.container.low.token}."),
+            " reference a parameter, such as #{gitlab.container.token}."),
         sensitive=True)
     SSL_CONTEXT = PropertyDescriptor(
         name="SSL Context Service",

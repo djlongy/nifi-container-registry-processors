@@ -26,11 +26,11 @@
       "name": "PlanTransfer",
       "processor_type": "PlanRegistryTransfer",
       "properties": {
-        "Source Registry URL": "#{gitlab.container.low.url}",
-        "Source Registry Username": "#{gitlab.container.low.username}",
-        "Source Registry Password": "#{gitlab.container.low.token}",
-        "Allowed Repositories": "#{gitlab.container.low.allowed.repositories}",
-        "Platform Selection": "#{gitlab.container.low.platforms}",
+        "Source Registry URL": "#{gitlab.container.url}",
+        "Source Registry Username": "#{gitlab.container.username}",
+        "Source Registry Password": "#{gitlab.container.token}",
+        "Allowed Repositories": "#{gitlab.container.allowed.repositories}",
+        "Platform Selection": "#{gitlab.container.platforms}",
         "Request Timeout": "120"
       },
       "auto_terminated": [
@@ -64,9 +64,9 @@
       "processor_type": "RouteRegistryTransfer",
       "properties": {
         "Transfer Side": "Low",
-        "Registry URL": "#{gitlab.container.low.url}",
-        "Registry Username": "#{gitlab.container.low.username}",
-        "Registry Password": "#{gitlab.container.low.token}"
+        "Registry URL": "#{gitlab.container.url}",
+        "Registry Username": "#{gitlab.container.username}",
+        "Registry Password": "#{gitlab.container.token}"
       },
       "auto_terminated": [
         "original",

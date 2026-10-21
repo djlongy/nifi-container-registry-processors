@@ -36,7 +36,7 @@ Enable it. The processors trust these CAs in addition to the system store.
 
 ## 3. Parameter context with the passwords
 
-**Parameter Contexts > +**, name it `registry`, and add:
+**Parameter Contexts > +**, name it `registry`, and add (this NiFi holds both registries, so the names carry the side: `low` is the source, `high` the target):
 
 | Parameter | Sensitive | Value |
 |---|---|---|

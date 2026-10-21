@@ -51,12 +51,14 @@ On the low NiFi instance, create a **Process Group** named `ImageTransferLowSide
 
 | Parameter | Sensitive | Example value / purpose |
 |---|---|---|
-| `gitlab.container.low.url` | No | `https://quay-low.example.internal` |
-| `gitlab.container.low.username` | No | `team+mirror_read` robot with pull access |
-| `gitlab.container.low.token` | **Yes** | Your source robot token. Enter it in the sensitive parameter, never as a literal processor property |
-| `gitlab.container.low.allowed.repositories` | No | `team/app` (exact allowlist), or `team/*` for a reviewed namespace; comma or newline separated entries are supported |
-| `gitlab.container.low.platforms` | No | `all` keeps every platform and the original index; example subset `linux/amd64` |
+| `gitlab.container.url` | No | `https://quay-low.example.internal` |
+| `gitlab.container.username` | No | `team+mirror_read` robot with pull access |
+| `gitlab.container.token` | **Yes** | Your source robot token. Enter it in the sensitive parameter, never as a literal processor property |
+| `gitlab.container.allowed.repositories` | No | `team/app` (exact allowlist), or `team/*` for a reviewed namespace; comma or newline separated entries are supported |
+| `gitlab.container.platforms` | No | `all` keeps every platform and the original index; example subset `linux/amd64` |
 | `truststore_password` | **Yes** | Only when you create the optional `RegistryTrust` service below |
+
+Parameters are named `<system>.<service>.<key>`, so every GitLab parameter sorts under `gitlab.`. The low and high sides are separate NiFi instances, so they share names. A NiFi that runs both sides adds the side: `gitlab.container.low.url`, `gitlab.container.high.url`.
 
 The registry URL, user and password come from this context, **not from webhook-supplied attributes**. Use a source repository the robot is allowed to read.
 
@@ -126,12 +128,12 @@ Open **Configure, Properties** on each card. Each table lists only the propertie
 
 | Property | Value |
 |---|---|
-| Source Registry URL | `#{gitlab.container.low.url}` |
-| Source Registry Username | `#{gitlab.container.low.username}` |
-| Source Registry Password | `#{gitlab.container.low.token}` |
+| Source Registry URL | `#{gitlab.container.url}` |
+| Source Registry Username | `#{gitlab.container.username}` |
+| Source Registry Password | `#{gitlab.container.token}` |
 | SSL Context Service | `RegistryTrust` (private CA only; otherwise leave unset) |
-| Allowed Repositories | `#{gitlab.container.low.allowed.repositories}` |
-| Platform Selection | `#{gitlab.container.low.platforms}` |
+| Allowed Repositories | `#{gitlab.container.allowed.repositories}` |
+| Platform Selection | `#{gitlab.container.platforms}` |
 | Request Timeout | `120` |
 
 `Request Timeout` is an integer number of **seconds**, not a NiFi duration. PlanRegistryTransfer validates the checksum, registry, image syntax and allowlist, resolves immutable manifests and emits upfront job facts.
@@ -148,9 +150,9 @@ This splits the small job JSON, never a downloaded blob.
 
 | Property | Value |
 |---|---|
-| Registry URL | `#{gitlab.container.low.url}` |
-| Registry Username | `#{gitlab.container.low.username}` |
-| Registry Password | `#{gitlab.container.low.token}` |
+| Registry URL | `#{gitlab.container.url}` |
+| Registry Username | `#{gitlab.container.username}` |
+| Registry Password | `#{gitlab.container.token}` |
 | SSL Context Service | `RegistryTrust` (private CA only; otherwise leave unset) |
 
 `Transfer Side` stays at its default `Low`. Target Repository stays unset. RouteRegistryTransfer handles scoped registry authentication and metadata HEAD requests. Its relationships name the condition of the FlowFile when it leaves:
@@ -480,13 +482,13 @@ On the high NiFi instance, create a **Process Group** named `ImageTransferHighSi
 
 | Parameter | Sensitive | Example value / purpose |
 |---|---|---|
-| `gitlab.container.high.url` | No | `https://quay-high.example.internal` |
-| `gitlab.container.high.username` | No | `team+mirror_write` robot with pull and push access |
-| `gitlab.container.high.token` | **Yes** | Your destination robot token |
-| `gitlab.container.high.repository` | No | `team/app-mirror`; blank keeps each source repository path instead |
+| `gitlab.container.url` | No | `https://quay-high.example.internal` |
+| `gitlab.container.username` | No | `team+mirror_write` robot with pull and push access |
+| `gitlab.container.token` | **Yes** | Your destination robot token |
+| `gitlab.container.repository` | No | `team/app-mirror`; blank keeps each source repository path instead |
 | `truststore_password` | **Yes** | Only when you create the optional `RegistryTrust` service below |
 
-The destination URL, user and password come from this context, never from FlowFile attributes. If you mirror several source repositories, leave `gitlab.container.high.repository` blank to preserve their paths; a single override can make equal tags from different sources overwrite each other.
+The destination URL, user and password come from this context, never from FlowFile attributes. If you mirror several source repositories, leave `gitlab.container.repository` blank to preserve their paths; a single override can make equal tags from different sources overwrite each other.
 
 **Optional private-CA trust.** If the destination registry's certificate is trusted by the system store, leave every **SSL Context Service** property blank. For a private CA, create **Controller Services, +, StandardSSLContextService 2.12.0**, name it `RegistryTrust`, and enable it before selecting it. Set only these properties:
 
@@ -538,11 +540,11 @@ Open **Configure, Properties** on each card. Each table lists only the propertie
 | Property | Value |
 |---|---|
 | Transfer Side | `High` |
-| Registry URL | `#{gitlab.container.high.url}` |
-| Registry Username | `#{gitlab.container.high.username}` |
-| Registry Password | `#{gitlab.container.high.token}` |
+| Registry URL | `#{gitlab.container.url}` |
+| Registry Username | `#{gitlab.container.username}` |
+| Registry Password | `#{gitlab.container.token}` |
 | SSL Context Service | `RegistryTrust` (private CA only; otherwise leave unset) |
-| Target Repository | `#{gitlab.container.high.repository}` (leave unset to keep each source repository) |
+| Target Repository | `#{gitlab.container.repository}` (leave unset to keep each source repository) |
 
 Request Timeout (`60` seconds) and Stale After Hours (`24`) stay at their defaults. RouteRegistryTransfer handles scoped registry authentication, metadata HEAD requests and empty upload-start POSTs. The high controller checks dependencies before a manifest PUT, commits by digest first and then by tag. Its relationships name the condition of the FlowFile when it leaves:
 
@@ -577,7 +579,7 @@ Add `Authorization` with **Properties, +** as a **dynamic property**. It is an H
 HTTP URL is the full request URL that RouteRegistryTransfer prepares for each FlowFile: the upload session URL with its `?digest=` for a blob, or the manifest URL for a manifest. Enter `${registry.http.url}` exactly. A registry address such as `https://registry.example:5000` sends every PUT to the registry root, so no blob is stored and every manifest waits with `missing layers`.
 
 Add **SSL Context Service** = `RegistryTrust` only when the registry's CA is outside Java's default trust (a 12th property; the live high side leaves it empty). Leave Request Username, Request Password and the OAuth2 provider unset for a Bearer registry (Quay, GitLab, Harbor): the controller supplies a scoped Bearer token in `registry.auth.header`. Leave Request Header Attributes Pattern unset: forwarding every attribute could leak tokens. 
-**Basic-auth registry** (`registry:2` with htpasswd): the controller never writes Basic credentials to an attribute, so it sends an empty `Authorization`, and InvokeHTTP adds Basic itself. Set **Request Username** and **Request Password** to the same account as RouteRegistryTransfer (`#{gitlab.container.high.username}`, `#{gitlab.container.high.token}`), and **delete the `Authorization` dynamic property**. InvokeHTTP sends a header even when its value is empty, so with the property present the request carries two `Authorization` headers, one empty and one Basic. A registry behind ingress-nginx over HTTP/2 rejects that with HTTP 400 before the registry sees it, and the controller then routes every blob to `failure`. Restore the dynamic property and clear the two request credentials when you go back to a Bearer registry.
+**Basic-auth registry** (`registry:2` with htpasswd): the controller never writes Basic credentials to an attribute, so it sends an empty `Authorization`, and InvokeHTTP adds Basic itself. Set **Request Username** and **Request Password** to the same account as RouteRegistryTransfer (`#{gitlab.container.username}`, `#{gitlab.container.token}`), and **delete the `Authorization` dynamic property**. InvokeHTTP sends a header even when its value is empty, so with the property present the request carries two `Authorization` headers, one empty and one Basic. A registry behind ingress-nginx over HTTP/2 rejects that with HTTP 400 before the registry sees it, and the controller then routes every blob to `failure`. Restore the dynamic property and clear the two request credentials when you go back to a Bearer registry.
 
 **Type `PUT`, not `${registry.http.method}`.** Every native request on the high side is a `PUT` (blob upload, manifest by digest, manifest by tag): the controller makes the `HEAD` and `POST` requests itself. NiFi shows Request Body Enabled, Request Content-Type, Request Chunked Transfer-Encoding Enabled, Request Content-Encoding and Request Multipart Form-Data Name only while HTTP Method is literally `PATCH`, `POST` or `PUT`. With `${registry.http.method}` they are hidden, so Request Content-Type cannot be set in the UI. A hidden property keeps working: the body is still sent, and Request Content-Type takes its default `${mime.type}`. That default sends blobs as `application/octet-stream`, but a manifest as the `mime.type` of its FlowFile, typically `application/json`, and the registry answers `400`, held as `native manifest-digest refused (HTTP 400)`. With the literal `PUT` the row above is visible and the manifest leaves with its own media type. The properties that stay hidden at `PUT` appear only after another one is set, and stay at their defaults: Request Digest Authentication Enabled (after Request Username), Response Body Attribute Size, OAuth2 Access Token Refresh Strategy and Response Cache Size. Request Body Enabled (`true`), Request Chunked Transfer-Encoding Enabled (`false`), Request Content-Encoding (`DISABLED`) and Request Multipart Form-Data Name (empty) are visible and stay at their defaults.
 

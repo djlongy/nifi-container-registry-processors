@@ -13,10 +13,10 @@
       "processor_type": "RouteRegistryTransfer",
       "properties": {
         "Transfer Side": "High",
-        "Registry URL": "#{gitlab.container.high.url}",
-        "Registry Username": "#{gitlab.container.high.username}",
-        "Registry Password": "#{gitlab.container.high.token}",
-        "Target Repository": "#{gitlab.container.high.repository}",
+        "Registry URL": "#{gitlab.container.url}",
+        "Registry Username": "#{gitlab.container.username}",
+        "Registry Password": "#{gitlab.container.token}",
+        "Target Repository": "#{gitlab.container.repository}",
         "Stale After Hours": "24"
       },
       "auto_terminated": [

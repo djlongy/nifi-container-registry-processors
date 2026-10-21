@@ -103,7 +103,7 @@ class PushContainerImages(FlowFileTransform):
         name="Target Registry Password",
         description=(
             "Password or access token for the target registry. Empty (default): none sent. Sensitive:"
-            " reference a parameter, such as #{gitlab.container.high.token}."),
+            " reference a parameter, such as #{gitlab.container.token}."),
         sensitive=True)
     SSL_CONTEXT = PropertyDescriptor(
         name="SSL Context Service",
