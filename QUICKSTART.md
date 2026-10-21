@@ -13,7 +13,7 @@ git clone https://github.com/djlongy/nifi-container-registry-processors.git
 cp -r nifi-container-registry-processors/python/container-registry /opt/nifi/nifi-current/python_extensions/
 ```
 
-Use the directory `nifi.python.extensions.source.directory.default` names in `nifi.properties` if it is not `./python_extensions`. Within a minute `PullContainerImages`, `ExportContainerImages` and `PushContainerImages` 1.5.2 appear in **Add Processor** (filter on `container`). Nothing is installed from PyPI.
+Use the directory `nifi.python.extensions.source.directory.default` names in `nifi.properties` if it is not `./python_extensions`. Within a minute `PullContainerImages`, `ExportContainerImages` and `PushContainerImages` 1.5.3 appear in **Add Processor** (filter on `container`). Nothing is installed from PyPI.
 
 ## 2. Trust the registry CA (SSL Context Service)
 
@@ -40,11 +40,11 @@ Enable it. The processors trust these CAs in addition to the system store.
 
 | Parameter | Sensitive | Value |
 |---|---|---|
-| `source_registry_user` | No | `svc-mirror-read` |
-| `source_registry_password` | Yes | the source registry token |
-| `target_registry_user` | No | `svc-mirror-write` |
-| `target_registry_password` | Yes | the target registry token |
-| `container-images.tar.dir` | No | `/data/out` |
+| `gitlab.container.low.username` | No | `svc-mirror-read` |
+| `gitlab.container.low.token` | Yes | the source registry token |
+| `gitlab.container.high.username` | No | `svc-mirror-write` |
+| `gitlab.container.high.token` | Yes | the target registry token |
+| `gitlab.container.tar.dir` | No | `/data/out` |
 
 The last one is the directory Export writes tars to and Push reads them from. A parameter means you can change it later without restarting NiFi (NiFi stops and restarts the processors that use it). Use a dedicated per-node volume at the same path on every node, never inside NiFi's content, FlowFile or provenance repository directories; see [README.md](README.md#where-to-put-the-tar-directory).
 
@@ -58,8 +58,8 @@ Add a process group and these processors, in this order, connecting each relatio
 |---|---|---|---|
 | 1 | ListenHTTP | Listening Port `8081`, Base Path `contentListener`, HTTP Headers for Attributes `X-.*` | success |
 | 2 | RouteOnAttribute | Routing Strategy `Route to Property name`, new property `request` = `${X-Artifact-Type:equals('container-images-request')}` | request. Auto-terminate `unmatched` |
-| 3 | ExportContainerImages | Source Registry URL `https://registry.example.com`, Source Registry Username `#{source_registry_user}`, Source Registry Password `#{source_registry_password}`, SSL Context Service the one from step 2, Allowed Repositories `team/*`, Tar Output Directory `#{container-images.tar.dir}` | success. failure to a LogAttribute or a funnel |
-| 4 | PushContainerImages | Target Registry URL `https://registry-high.example.com`, Target Registry Username `#{target_registry_user}`, Target Registry Password `#{target_registry_password}`, SSL Context Service the same, Input Tar Path `#{container-images.tar.dir}/${filename}`, Delete Input Tar `true` | success: auto-terminate. failure to a LogAttribute or a funnel |
+| 3 | ExportContainerImages | Source Registry URL `https://registry.example.com`, Source Registry Username `#{gitlab.container.low.username}`, Source Registry Password `#{gitlab.container.low.token}`, SSL Context Service the one from step 2, Allowed Repositories `team/*`, Tar Output Directory `#{gitlab.container.tar.dir}` | success. failure to a LogAttribute or a funnel |
+| 4 | PushContainerImages | Target Registry URL `https://registry-high.example.com`, Target Registry Username `#{gitlab.container.high.username}`, Target Registry Password `#{gitlab.container.high.token}`, SSL Context Service the same, Input Tar Path `#{gitlab.container.tar.dir}/${filename}`, Delete Input Tar `true` | success: auto-terminate. failure to a LogAttribute or a funnel |
 
 The directory (`/data/out`) must exist and be writable by the NiFi user. Export writes the tar there and Push reads it by path, so both processors must run on the same node, or the directory must be shared storage mounted at the same path on every node.
 

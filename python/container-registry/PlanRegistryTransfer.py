@@ -125,7 +125,7 @@ class PlanRegistryTransfer(FlowFileTransform):
         implements = ["org.apache.nifi.python.processor.FlowFileTransform"]
 
     class ProcessorDetails:
-        version = "1.5.2"
+        version = "1.5.3"
         description = ("Plans the transfer of container images: reads the manifests and indexes the FlowFile names from the "
                        "source registry and emits one JSON job list, {\"transfer.id\", \"jobs\"}, with a job per config, "
                        "layer, manifest and index. It never reads a blob. Split $.jobs with SplitJson and let native "
@@ -153,7 +153,7 @@ class PlanRegistryTransfer(FlowFileTransform):
         name="Source Registry Password",
         description=(
             "Password or access token for the source registry. Empty (default): none sent. Sensitive:"
-            " reference a parameter, such as #{registry_password}."),
+            " reference a parameter, such as #{gitlab.container.low.token}."),
         sensitive=True)
     SSL_CONTEXT = PropertyDescriptor(
         name="SSL Context Service",

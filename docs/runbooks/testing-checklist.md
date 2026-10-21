@@ -26,7 +26,7 @@ Build the flow first with [nifi-by-hand.md](nifi-by-hand.md) and send a webhook 
 ## 3. The tar is removed after Push
 
 - **Where:** a shell on the node that ran Push.
-- **Do:** `ls -la /data/out` (the value of `container-images.tar.dir`).
+- **Do:** `ls -la /data/out` (the value of `gitlab.container.tar.dir`).
 - **Expect (measured, lab NiFi 2.11, 9.66 GB image):** with Delete Input Tar `true`, no `container-images-*.tar` and no `*.pushing-*` file after a successful push. After a failed push the tar stays. Disk use was 1x the tar: Push renames in place, then deletes.
 
 ## 4. A bad webhook exports nothing
@@ -55,7 +55,7 @@ Build the flow first with [nifi-by-hand.md](nifi-by-hand.md) and send a webhook 
 
 ## 8. Parameter change
 
-- **Do:** in **Parameter Contexts**, change `container-images.tar.dir` to a second directory, apply.
+- **Do:** in **Parameter Contexts**, change `gitlab.container.tar.dir` to a second directory, apply.
 - **Expect (to confirm):** NiFi stops and restarts the processors that use it without a NiFi restart, and the next export lands in the new directory.
 
 ## 9. Tar Per Image

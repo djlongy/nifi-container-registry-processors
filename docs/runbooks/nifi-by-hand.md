@@ -53,12 +53,12 @@ ${X-Artifact-Type:equals('container-images-request')}
 | Property | Value |
 |---|---|
 | Source Registry URL | `https://registry.example.com` |
-| Source Registry Username | `#{source_registry_user}` |
-| Source Registry Password | `#{source_registry_password}` |
+| Source Registry Username | `#{gitlab.container.low.username}` |
+| Source Registry Password | `#{gitlab.container.low.token}` |
 | SSL Context Service | the StandardSSLContextService (omit for a public CA) |
 | Trusted Storage Hosts | empty, or the on-premises storage the registry redirects to, for example `minio.example.com` |
 | Allowed Repositories | `team/*` |
-| Tar Output Directory | `#{container-images.tar.dir}` (a parameter in the `registry` context with value `/data/out`; see the quickstart) |
+| Tar Output Directory | `#{gitlab.container.tar.dir}` (a parameter in the `registry` context with value `/data/out`; see the quickstart) |
 | Tar Filename Prefix | `container-images-` (default) |
 | X-Artifact-Type Value | `container-images` (default) |
 | Max Export Size | empty (no limit) |
@@ -76,11 +76,11 @@ ${X-Artifact-Type:equals('container-images-request')}
 | Property | Value |
 |---|---|
 | Target Registry URL | `https://registry-high.example.com` |
-| Target Registry Username | `#{target_registry_user}` |
-| Target Registry Password | `#{target_registry_password}` |
+| Target Registry Username | `#{gitlab.container.high.username}` |
+| Target Registry Password | `#{gitlab.container.high.token}` |
 | SSL Context Service | the StandardSSLContextService (omit for a public CA) |
 | Trusted Storage Hosts | empty, or the target's private storage host |
-| Input Tar Path | `#{container-images.tar.dir}/${filename}` |
+| Input Tar Path | `#{gitlab.container.tar.dir}/${filename}` |
 | Delete Input Tar | `true` |
 | Rewrite Target Base Path | empty (images keep their repository name) |
 | Strip Target Base Path | `false` (default) |

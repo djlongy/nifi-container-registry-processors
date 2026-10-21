@@ -219,7 +219,7 @@ A FlowFileTransform: input is required. The processor reads no attribute by name
 
 | Rule | Detail |
 |---|---|
-| Where | A path on the **local disk of the node that runs the processor**, for example `#{container-images.tar.dir}/${filename}`. Never inside a NiFi repository. In a cluster the file must be on that node, so do not load balance the incoming connection |
+| Where | A path on the **local disk of the node that runs the processor**, for example `#{gitlab.container.tar.dir}/${filename}`. Never inside a NiFi repository. In a cluster the file must be on that node, so do not load balance the incoming connection |
 | Empty | The FlowFile **content** is the tar. It is held in memory and then written to a temporary file, so use it for small tars only. **Delete Input Tar** is ignored |
 | A regular file that is locked | A push of it is running: `failure`, `Input Tar Path {path} is locked: a push of it is running` |
 | The file does not exist | The processor adopts one `{path}.pushing-*` file that a killed push left. One adoptable file: it is used. None: `failure`, `Input Tar Path {path} does not exist`, with `, and a push of that tar is still running` when a leftover is locked. More than one: `failure`, `Input Tar Path {path} does not exist and more than one push was left part way: {names}. Keep one, delete the others` |

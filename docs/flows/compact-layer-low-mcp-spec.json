@@ -26,11 +26,11 @@
       "name": "PlanTransfer",
       "processor_type": "PlanRegistryTransfer",
       "properties": {
-        "Source Registry URL": "#{src_url}",
-        "Source Registry Username": "#{src_user}",
-        "Source Registry Password": "#{src_password}",
-        "Allowed Repositories": "#{allowed_repositories}",
-        "Platform Selection": "#{platforms}",
+        "Source Registry URL": "#{gitlab.container.low.url}",
+        "Source Registry Username": "#{gitlab.container.low.username}",
+        "Source Registry Password": "#{gitlab.container.low.token}",
+        "Allowed Repositories": "#{gitlab.container.low.allowed.repositories}",
+        "Platform Selection": "#{gitlab.container.low.platforms}",
         "Request Timeout": "120"
       },
       "auto_terminated": [
@@ -39,7 +39,7 @@
       "bundle": {
         "group": "org.apache.nifi",
         "artifact": "python-extensions",
-        "version": "1.5.2"
+        "version": "1.5.3"
       }
     },
     {
@@ -64,9 +64,9 @@
       "processor_type": "RouteRegistryTransfer",
       "properties": {
         "Transfer Side": "Low",
-        "Registry URL": "#{src_url}",
-        "Registry Username": "#{src_user}",
-        "Registry Password": "#{src_password}"
+        "Registry URL": "#{gitlab.container.low.url}",
+        "Registry Username": "#{gitlab.container.low.username}",
+        "Registry Password": "#{gitlab.container.low.token}"
       },
       "auto_terminated": [
         "original",
@@ -76,7 +76,7 @@
       "bundle": {
         "group": "org.apache.nifi",
         "artifact": "python-extensions",
-        "version": "1.5.2"
+        "version": "1.5.3"
       }
     },
     {

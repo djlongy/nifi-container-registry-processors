@@ -32,7 +32,7 @@ class ExportContainerImages(FlowFileTransform):
         implements = ["org.apache.nifi.python.processor.FlowFileTransform"]
 
     class ProcessorDetails:
-        version = "1.5.2"
+        version = "1.5.3"
         description = ("Exports the images a gitlab-registry-mirror webhook names as one mirror.py export tar in Tar Output "
                        "Directory, on this node's local disk. The body only selects images: it must match the X-Sha256 "
                        "attribute, name the host of Source Registry URL and repositories in Allowed Repositories, and every "
@@ -59,7 +59,7 @@ class ExportContainerImages(FlowFileTransform):
         name="Source Registry Password",
         description=(
             "Password or access token for the source registry. Empty (default): none sent. Sensitive:"
-            " reference a parameter, such as #{registry_password}."),
+            " reference a parameter, such as #{gitlab.container.low.token}."),
         sensitive=True)
     SSL_CONTEXT = PropertyDescriptor(
         name="SSL Context Service",
@@ -87,7 +87,7 @@ class ExportContainerImages(FlowFileTransform):
         name="Tar Output Directory",
         description=(
             "Local directory on this node for the tars, such as /data/out. Set it from a parameter, "
-            "#{container-images.tar.dir}. Use a per-node volume, same path on every node, outside "
+            "#{gitlab.container.tar.dir}. Use a per-node volume, same path on every node, outside "
             "NiFi's repositories. Trap: Push reads it by path: keep the connection not load-balanced,"
             " or use shared storage."),
         required=True,

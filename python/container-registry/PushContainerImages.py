@@ -77,7 +77,7 @@ class PushContainerImages(FlowFileTransform):
         implements = ["org.apache.nifi.python.processor.FlowFileTransform"]
 
     class ProcessorDetails:
-        version = "1.5.2"
+        version = "1.5.3"
         description = ("Pushes every image of a mirror.py export tar into the target registry, digests unchanged. The tar "
                        "is read from the local disk path in Input Tar Path (set it for any real tar), or from the "
                        "FlowFile content when that is empty. Every target tag is checked before the first upload, so "
@@ -103,7 +103,7 @@ class PushContainerImages(FlowFileTransform):
         name="Target Registry Password",
         description=(
             "Password or access token for the target registry. Empty (default): none sent. Sensitive:"
-            " reference a parameter, such as #{registry_password}."),
+            " reference a parameter, such as #{gitlab.container.high.token}."),
         sensitive=True)
     SSL_CONTEXT = PropertyDescriptor(
         name="SSL Context Service",
@@ -122,7 +122,7 @@ class PushContainerImages(FlowFileTransform):
     TAR_FILE = PropertyDescriptor(
         name="Input Tar Path",
         description=(
-            "Path of the export tar on this node's local disk, such as #{container-images.tar.dir}/"
+            "Path of the export tar on this node's local disk, such as #{gitlab.container.tar.dir}/"
             "${filename}. Export must write it here, so no load balancing. Never in NiFi's "
             "repositories. If missing, one <path>.pushing-* left by a kill is adopted. Empty "
             "(default): FlowFile content, in memory, small tars only."),

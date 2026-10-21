@@ -13,10 +13,10 @@
       "processor_type": "RouteRegistryTransfer",
       "properties": {
         "Transfer Side": "High",
-        "Registry URL": "#{dst_url}",
-        "Registry Username": "#{dst_user}",
-        "Registry Password": "#{dst_password}",
-        "Target Repository": "#{dst_repository}",
+        "Registry URL": "#{gitlab.container.high.url}",
+        "Registry Username": "#{gitlab.container.high.username}",
+        "Registry Password": "#{gitlab.container.high.token}",
+        "Target Repository": "#{gitlab.container.high.repository}",
         "Stale After Hours": "24"
       },
       "auto_terminated": [
@@ -26,7 +26,7 @@
       "bundle": {
         "group": "org.apache.nifi",
         "artifact": "python-extensions",
-        "version": "1.5.2"
+        "version": "1.5.3"
       }
     },
     {

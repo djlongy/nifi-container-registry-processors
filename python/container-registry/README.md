@@ -45,7 +45,7 @@ Generated from the descriptors (`python3 python/tests/test_readme_tables.py --wr
 |---|---|---|---|
 | Source Registry URL | Yes | none | Registry to read images from, such as https://registry.example.com, or https://host/artifactory/api/docker/repo-key for Artifactory. No user:password in the URL. Required, no default. Environment variables allowed: ${REGISTRY_URL}. |
 | Source Registry Username | No | none | User for the source registry. Empty (default): anonymous access, which works only on a registry that allows it. Environment variables allowed: ${REGISTRY_USER}. |
-| Source Registry Password | No | none | Password or access token for the source registry. Empty (default): none sent. Sensitive: reference a parameter, such as #{registry_password}. |
+| Source Registry Password | No | none | Password or access token for the source registry. Empty (default): none sent. Sensitive: reference a parameter, such as #{gitlab.container.low.token}. |
 | SSL Context Service | No | none | A StandardSSLContextService whose PKCS12 or JKS truststore holds the CA of the registry and the Ledger URL (PEM is not accepted). Added to the system store and SSL_CERT_FILE. Empty (default): only those are trusted. Keystore ignored. |
 | Trusted Storage Hosts | No | none | Hosts, IPs or CIDR ranges the registry may redirect blob transfers to although they are private, such as an on-premises MinIO: minio.internal, 10.20.0.0/16. Empty (default): private, loopback, link-local and http-from-https redirects are refused. The registry's own host is always allowed. |
 | Image Source | Yes | `Registry Listing` | What a run exports. Default Registry Listing: tags of Repositories to Export whose digest changed since the last export. Ledger: images the mirror ledger says it synced. Image List: the images in Image List. |
@@ -58,7 +58,7 @@ Generated from the descriptors (`python3 python/tests/test_readme_tables.py --wr
 | Initial Run | Yes | `Export All` | What a run does when no state exists yet. Default Export All: export every image found. Record Only: record the current digests and export nothing, so only later changes are exported. |
 | Rewrite Target Base Path | No | none | Replace the first path segment of every target repository, which is the name Push creates: team/app becomes new/app with new. Empty (default): unchanged. Not with Strip Target Base Path. Environment variables allowed. |
 | Strip Target Base Path | Yes | `false` | Remove the first path segment of every target repository: team/app becomes app. Default false: names unchanged. Not with Rewrite Target Base Path. |
-| Tar Output Directory | Yes | none | Local directory on this node for the tars, such as /data/out. Set it from a parameter, #{container-images.tar.dir}. Use a per-node volume, same path on every node, outside NiFi's repositories. Trap: FetchFile reads it by path: keep the connection not load-balanced, or use shared storage. |
+| Tar Output Directory | Yes | none | Local directory on this node for the tars, such as /data/out. Set it from a parameter, #{gitlab.container.tar.dir}. Use a per-node volume, same path on every node, outside NiFi's repositories. Trap: FetchFile reads it by path: keep the connection not load-balanced, or use shared storage. |
 | Tar Filename Prefix | Yes | `container-images-` | Start of each tar's file name, followed by the UTC time and .tar, such as container-images-20260101T000000000000Z.tar. Default container-images-. Pull treats any such file left in Tar Output Directory as its own, so keep it unique there. |
 | X-Artifact-Type Value | Yes | `container-images` | Value of the X-Artifact-Type attribute on the output FlowFile, which a RouteOnAttribute downstream matches. Default container-images, the value the Push route expects. Change it only together with that route. |
 | Max Export Size | No | none | Most blob bytes in one tar, such as 20 GB; a layer shared by two images counts once. The rest go in the next run; an image over the limit goes alone. Empty (default): no limit. |
@@ -72,11 +72,11 @@ Generated from the descriptors (`python3 python/tests/test_readme_tables.py --wr
 |---|---|---|---|
 | Source Registry URL | Yes | none | Registry to read images from, such as https://registry.example.com, or https://host/artifactory/api/docker/repo-key for Artifactory. No user:password in the URL. Required, no default. Environment variables allowed: ${REGISTRY_URL}. |
 | Source Registry Username | No | none | User for the source registry. Empty (default): anonymous access, which works only on a registry that allows it. Environment variables allowed: ${REGISTRY_USER}. |
-| Source Registry Password | No | none | Password or access token for the source registry. Empty (default): none sent. Sensitive: reference a parameter, such as #{registry_password}. |
+| Source Registry Password | No | none | Password or access token for the source registry. Empty (default): none sent. Sensitive: reference a parameter, such as #{gitlab.container.low.token}. |
 | SSL Context Service | No | none | A StandardSSLContextService whose PKCS12 or JKS truststore holds the registry's CA (it does not accept PEM). Its CAs add to the system store and SSL_CERT_FILE. Empty (default): only those are trusted. Its keystore is ignored. |
 | Trusted Storage Hosts | No | none | Hosts, IPs or CIDR ranges the registry may redirect blob transfers to although they are private, such as an on-premises MinIO: minio.internal, 10.20.0.0/16. Empty (default): private, loopback, link-local and http-from-https redirects are refused. The registry's own host is always allowed. |
 | Allowed Repositories | Yes | none | Allowlist, not the selection: the webhook body picks the images and each must be in here. Comma or new line separated: team/app, or team/* for a prefix, * for all. Required. Any other repository fails the FlowFile. |
-| Tar Output Directory | Yes | none | Local directory on this node for the tars, such as /data/out. Set it from a parameter, #{container-images.tar.dir}. Use a per-node volume, same path on every node, outside NiFi's repositories. Trap: Push reads it by path: keep the connection not load-balanced, or use shared storage. |
+| Tar Output Directory | Yes | none | Local directory on this node for the tars, such as /data/out. Set it from a parameter, #{gitlab.container.tar.dir}. Use a per-node volume, same path on every node, outside NiFi's repositories. Trap: Push reads it by path: keep the connection not load-balanced, or use shared storage. |
 | Tar Filename Prefix | Yes | `container-images-` | Start of each tar's file name, followed by the UTC time and .tar, such as container-images-20260101T000000000000Z.tar. Default container-images-. Pull treats any such file left in Tar Output Directory as its own, so keep it unique there. |
 | X-Artifact-Type Value | Yes | `container-images` | Value of the X-Artifact-Type attribute on the output FlowFile, which a RouteOnAttribute downstream matches. Default container-images, the value the Push route expects. Change it only together with that route. |
 | Max Export Size | No | none | Most blob bytes in one tar, such as 20 GB; a layer shared by two images counts once. More fails the whole webhook, nothing is split. Empty (default): no limit. |
@@ -91,7 +91,7 @@ Generated from the descriptors (`python3 python/tests/test_readme_tables.py --wr
 |---|---|---|---|
 | Source Registry URL | Yes | none | Registry to read manifests from, such as https://registry.example.com, or https://host/artifactory/api/docker/repo-key for Artifactory. No user:password in the URL. Required, no default. Environment variables allowed: ${REGISTRY_URL}. |
 | Source Registry Username | No | none | User for the source registry. Empty (default): anonymous access, which works only on a registry that allows it. Environment variables allowed: ${REGISTRY_USER}. |
-| Source Registry Password | No | none | Password or access token for the source registry. Empty (default): none sent. Sensitive: reference a parameter, such as #{registry_password}. |
+| Source Registry Password | No | none | Password or access token for the source registry. Empty (default): none sent. Sensitive: reference a parameter, such as #{gitlab.container.low.token}. |
 | SSL Context Service | No | none | A StandardSSLContextService whose PKCS12 or JKS truststore holds the registry's CA (it does not accept PEM). Its CAs add to the system store and SSL_CERT_FILE. Empty (default): only those are trusted. Its keystore is ignored. |
 | Allowed Repositories | Yes | none | Allowlist, not the selection: the FlowFile picks the images and each must be in here. Comma or new line separated: team/app, or team/* for a prefix, * for all. Required. Any other repository fails the FlowFile. |
 | Platform Selection | Yes | `all` | all (default): every platform, index kept, so its digest is the source's. Or platforms such as linux/amd64, linux/arm64/v8 (comma or new line separated): only those are planned, without the index; a single match gets the tag, on its own digest. |
@@ -107,10 +107,10 @@ Generated from the descriptors (`python3 python/tests/test_readme_tables.py --wr
 |---|---|---|---|
 | Target Registry URL | Yes | none | Registry to push images into, such as https://registry.example.com, or https://host/artifactory/api/docker/repo-key for Artifactory. No user:password in the URL. Required, no default. FlowFile attributes allowed. |
 | Target Registry Username | No | none | User for the target registry. Empty (default): anonymous access, which works only on a registry that allows it. Environment variables allowed: ${REGISTRY_USER}. |
-| Target Registry Password | No | none | Password or access token for the target registry. Empty (default): none sent. Sensitive: reference a parameter, such as #{registry_password}. |
+| Target Registry Password | No | none | Password or access token for the target registry. Empty (default): none sent. Sensitive: reference a parameter, such as #{gitlab.container.high.token}. |
 | SSL Context Service | No | none | A StandardSSLContextService whose PKCS12 or JKS truststore holds the registry's CA (it does not accept PEM). Its CAs add to the system store and SSL_CERT_FILE. Empty (default): only those are trusted. Its keystore is ignored. |
 | Trusted Storage Hosts | No | none | Hosts, IPs or CIDR ranges the registry may redirect blob transfers to although they are private, such as an on-premises MinIO: minio.internal, 10.20.0.0/16. Empty (default): private, loopback, link-local and http-from-https redirects are refused. The registry's own host is always allowed. |
-| Input Tar Path | No | none | Path of the export tar on this node's local disk, such as #{container-images.tar.dir}/${filename}. Export must write it here, so no load balancing. Never in NiFi's repositories. If missing, one <path>.pushing-* left by a kill is adopted. Empty (default): FlowFile content, in memory, small tars only. |
+| Input Tar Path | No | none | Path of the export tar on this node's local disk, such as #{gitlab.container.tar.dir}/${filename}. Export must write it here, so no load balancing. Never in NiFi's repositories. If missing, one <path>.pushing-* left by a kill is adopted. Empty (default): FlowFile content, in memory, small tars only. |
 | Delete Input Tar | Yes | `false` | Delete the tar once every image is pushed. Default false: it stays. A failed push keeps it. The tar is renamed to <path>.pushing-<id> while pushing, so a killed push leaves that name; a replay adopts it. Ignored when Input Tar Path is empty. |
 | Rewrite Target Base Path | No | none | Replace the first path segment of every repository pushed: team/app becomes new/app with new. Empty (default): the name recorded in the tar. Not with Strip Target Base Path. FlowFile attributes allowed. |
 | Strip Target Base Path | Yes | `false` | Remove the first path segment of every target repository: team/app becomes app. Default false: names unchanged. Not with Rewrite Target Base Path. |
@@ -123,7 +123,7 @@ Generated from the descriptors (`python3 python/tests/test_readme_tables.py --wr
 Low side. Run Pull on the **primary node** only (Scheduling > Execution), every 15 minutes:
 
 ```text
-PullContainerImages (Source Registry URL, Repositories to Export team/*, Tar Output Directory #{container-images.tar.dir}, + diode.route = container-images)
+PullContainerImages (Source Registry URL, Repositories to Export team/*, Tar Output Directory #{gitlab.container.tar.dir}, + diode.route = container-images)
   -> FetchFile (File to Fetch ${absolute.path}${filename}, Completion Strategy Delete File)
   -> the diode
 ```
@@ -142,8 +142,8 @@ Low side, driven by the gitlab-registry-mirror webhook (`MIRROR_REQUEST_URL`) in
 ```text
 ListenHTTP
   -> RouteOnAttribute ${X-Artifact-Type:equals('container-images-request')}
-  -> ExportContainerImages (Source Registry URL, Allowed Repositories team/*, Tar Output Directory #{container-images.tar.dir})
-  -> PushContainerImages (Target Registry URL, Input Tar Path #{container-images.tar.dir}/${filename}, Delete Input Tar true)   failure -> a stopped processor
+  -> ExportContainerImages (Source Registry URL, Allowed Repositories team/*, Tar Output Directory #{gitlab.container.tar.dir})
+  -> PushContainerImages (Target Registry URL, Input Tar Path #{gitlab.container.tar.dir}/${filename}, Delete Input Tar true)   failure -> a stopped processor
 ```
 
 The body only selects images. ExportContainerImages fails the FlowFile to `failure`, with `registry.error`, and exports nothing when: `X-Sha256` is missing or is not the sha256 of the body; the body is not JSON `{"registry", "images": [{"repository", "tag", "digest"}]}`; `registry` is not the host of Source Registry URL (`:443` is ignored); a repository is not in Allowed Repositories; a repository, tag or digest is malformed; or the digest the registry resolves for `repository:tag` now differs from the body's. Otherwise all images go into one tar, and `success` carries the same attributes as Pull's (empty content). To send it across a diode, put FetchFile after it as for Pull. Content-based integrity only: add a token on ListenHTTP if the sender must be authenticated.
@@ -176,7 +176,7 @@ ExportContainerImages (Tar Per Image true)
   -> EvaluateJsonPath (Destination flowfile-attribute, Return Type auto-detect, and one property per attribute:
        filename = $['filename'], X-Sha256 = $['X-Sha256'], registry.repository = $['registry.repository'],
        registry.tag = $['registry.tag'], registry.digest = $['registry.digest'])
-  -> PushContainerImages (Input Tar Path #{container-images.tar.dir}/${filename})
+  -> PushContainerImages (Input Tar Path #{gitlab.container.tar.dir}/${filename})
 ```
 
 Each Push FlowFile then pushes one image. The split FlowFiles also carry the whole-webhook attributes, so read `registry.repository`, `registry.tag` and `registry.digest` for the image, not `registry.image.*`.
@@ -214,7 +214,7 @@ Property names changed and CA Certificate File was removed (see the migration ta
 
 ## Where to put the tar directory
 
-Set Tar Output Directory (and the directory part of Input Tar Path on Push) from a parameter in a parameter context, for example `#{container-images.tar.dir}` with the value `/data/out`. Changing the value then needs no NiFi restart: NiFi stops the processors that use the parameter, applies it and starts them again.
+Set Tar Output Directory (and the directory part of Input Tar Path on Push) from a parameter in a parameter context, for example `#{gitlab.container.tar.dir}` with the value `/data/out`. Changing the value then needs no NiFi restart: NiFi stops the processors that use the parameter, applies it and starts them again.
 
 - **Recommended:** a dedicated volume on each node, mounted at the same path on every node, used for nothing else. Leave the connection from Export to Push on Load Balance Strategy `Do not load balance` (the default): the FlowFile then stays on the node where Export wrote the tar, and Push on that node reads its own disk. Shared storage is not required.
 - **Shared storage (ReadWriteMany, NFS):** only needed when that connection is load-balanced, because Push may then run on a node that did not write the tar.

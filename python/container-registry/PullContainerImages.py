@@ -103,7 +103,7 @@ class PullContainerImages(FlowFileSource):
         implements = ["org.apache.nifi.python.processor.FlowFileSource"]
 
     class ProcessorDetails:
-        version = "1.5.2"
+        version = "1.5.3"
         description = ("Exports container images from a source registry as a mirror.py export tar written to Tar Output "
                        "Directory, and emits an empty FlowFile that names it, for FetchFile to read on the same node (or "
                        "shared storage). Each run exports what changed since the last export, recorded in cluster state. "
@@ -129,7 +129,7 @@ class PullContainerImages(FlowFileSource):
         name="Source Registry Password",
         description=(
             "Password or access token for the source registry. Empty (default): none sent. Sensitive:"
-            " reference a parameter, such as #{registry_password}."),
+            " reference a parameter, such as #{gitlab.container.low.token}."),
         sensitive=True)
     SSL_CONTEXT = PropertyDescriptor(
         name="SSL Context Service",
@@ -229,7 +229,7 @@ class PullContainerImages(FlowFileSource):
         name="Tar Output Directory",
         description=(
             "Local directory on this node for the tars, such as /data/out. Set it from a parameter, "
-            "#{container-images.tar.dir}. Use a per-node volume, same path on every node, outside "
+            "#{gitlab.container.tar.dir}. Use a per-node volume, same path on every node, outside "
             "NiFi's repositories. Trap: FetchFile reads it by path: keep the connection not load-"
             "balanced, or use shared storage."),
         required=True,
