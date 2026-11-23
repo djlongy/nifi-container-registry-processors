@@ -1,8 +1,29 @@
-# container-registry
+# container-registry: NiFi processors that move container images across a data diode
 
-PlanRegistryTransfer and RouteRegistryTransfer as NiFi Python processors: the compact native layer transfer, plain source with no build. Plan plans the jobs of a gitlab-registry-mirror webhook. Route drives native InvokeHTTP downloads and uploads, one FlowFile per blob and manifest. Image bytes stay in NiFi's content repository: no tar and no staging directory.
+This folder holds two Apache NiFi 2 Python processors, **PlanRegistryTransfer** and
+**RouteRegistryTransfer**. Together with NiFi's own InvokeHTTP they copy container images
+from a registry on one network to a registry on another, for example across a one-way data
+diode, with digests unchanged and no skopeo or docker on the NiFi host.
 
-1.7.0 holds waiting manifests at Wait and Notify instead of a timer: a 1.6.0 high side needs the new cards ([ADR 0009](../../docs/decisions/adr-0009-notify-wait-manifests.md)). 1.6.0 removed PullContainerImages, ExportContainerImages and PushContainerImages (the tar option O1). Use 1.5.x for them. See [ADR 0008](../../docs/decisions/adr-0008-remove-tar-processors.md).
+Each image moves as its parts: one FlowFile per layer (blob), config and manifest. The
+processors only read metadata. NiFi's native **InvokeHTTP** downloads and uploads every
+blob, so image bytes stay in NiFi's content repository and never pass through Python
+memory: no tar, no staging directory, and memory does not grow with image size.
+
+| Processor | Side | Job |
+|---|---|---|
+| PlanRegistryTransfer | low (source) | Reads a transfer request (for example a registry mirror webhook), resolves each image's manifest and plans one job per blob, config and manifest. |
+| RouteRegistryTransfer | both | Decides the next step for each FlowFile. Low side: sends it to InvokeHTTP to download from the source registry. High side: checks whether the target registry already has it, uploads what is missing, and pushes each manifest only once all its blobs are present (held at native Wait and Notify). |
+
+Copy this **whole folder**, helper modules included (`container_registry_client.py`,
+`nifi_attributes.py`, `__init__.py`): the processors import them.
+
+Version notes: 1.7.0 holds waiting manifests at Wait and Notify instead of a timer, so a
+1.6.0 high side needs the new cards. 1.6.0 removed the tar processors (PullContainerImages,
+ExportContainerImages, PushContainerImages); use 1.5.x for them.
+
+Full documentation, decision records and the step-by-step build guide with screenshots:
+<https://github.com/djlongy/nifi-container-registry-processors>
 
 ## More documentation
 
