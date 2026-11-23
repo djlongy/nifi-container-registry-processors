@@ -32,16 +32,16 @@ A container image layer is often several GB. Every option below keeps the layer 
 
 ### O1: staging dir + FetchFile (the existing processors)
 
-- **Flow:** Pull or Export (a Python FlowFileSource) writes the tar to a directory, then FetchFile (File to Fetch `${absolute.path}/${filename}`, Completion Strategy `Delete File`) moves it into native FlowFile content, optionally a load-balanced connection, then PutFile and PushContainerImages (Input Tar Path, Delete Input Tar). See [nifi-by-hand.md](../runbooks/nifi-by-hand.md).
+- **Flow:** Pull or Export (a Python FlowFileSource) writes the tar to a directory, then FetchFile (File to Fetch `${absolute.path}/${filename}`, Completion Strategy `Delete File`) moves it into native FlowFile content, optionally a load-balanced connection, then PutFile and PushContainerImages (Input Tar Path, Delete Input Tar). The by-hand page (nifi-by-hand-tar-flow.md) was removed with the archive on 2026-11-23.
 - **Pros:** keeps the typed property UI, sensitive properties and Pull's cluster state. The result is native FlowFile content (a FETCH provenance event). The sha256 is equal end to end. No new code.
-- **Cons:** staging dir plus content repository is 2 copies of the tar, 3 with PutFile (see [ADR 0002](adr-0002-tar-storage.md)). The writer and FetchFile must stay on one node, so no load balancing between them.
+- **Cons:** staging dir plus content repository is 2 copies of the tar, 3 with PutFile (see ADR 0002 (removed with the archive, in git history)). The writer and FetchFile must stay on one node, so no load balancing between them.
 - **Pick when:** the image fits a tar flow, a staging volume exists, and simplicity matters.
 - **Failure and recovery:** FetchFile commits first and deletes second, and a failed delete is only logged (SOURCE, `FetchFile.java` lines 316 to 345), so a leftover tar can reappear as a duplicate. Pull's `LEFTOVER_AFTER` handling covers that, and Push skips tags already present. A kill leaves `.<name>.partial` or `<name>.pushing-<id>`; Push adopts a single `.pushing-*` on replay.
 - **Evidence:** PROVEN at 3 GiB, single node: python VmHWM 25 MB, Java RSS 1218 MB, sha256 equal, staging 3073 MB to 0 after the fetch. The lab flow with the real Pull, FetchFile, PutFile and Push ran at 54.65 MB. Cluster load balancing after the fetch is UNVERIFIED.
 
 ### O2: one FlowFile per layer
 
-- **Flow:** the low side resolves the image: `InvokeHTTP` GET of the manifest (Accept list of OCI and Docker types), a digest check, `SplitJson` over the layers, then `InvokeHTTP` GET of each blob. Every blob is its own FlowFile carrying image name, platform, layer N of M, a check code and its digest. The high side routes blobs and manifests: `InvokeHTTP` HEAD (skip if present), `InvokeHTTP` POST `.../blobs/uploads/?digest=` (monolithic), and a manifest gate script that waits until every blob is present before it PUTs the manifest bytes unchanged. See [nifi-by-hand-o2-layer-flow.md](../archive/nifi-by-hand-o2-layer-flow.md).
+- **Flow:** the low side resolves the image: `InvokeHTTP` GET of the manifest (Accept list of OCI and Docker types), a digest check, `SplitJson` over the layers, then `InvokeHTTP` GET of each blob. Every blob is its own FlowFile carrying image name, platform, layer N of M, a check code and its digest. The high side routes blobs and manifests: `InvokeHTTP` HEAD (skip if present), `InvokeHTTP` POST `.../blobs/uploads/?digest=` (monolithic), and a manifest gate script that waits until every blob is present before it PUTs the manifest bytes unchanged. The by-hand page (nifi-by-hand-o2-layer-flow.md) was removed with the archive on 2026-11-23.
 - **Pros:** layer bytes never reach Python, so memory is flat. One copy per hop. Manifest digests and tags stay byte-identical, including an OCI index with its children. A layer that is already in the target is dropped without upload. Lost layers are resent by number.
 - **Cons:** many processors (about 16 for a single image path, 31 with index handling and recovery). The registry token sits in a FlowFile attribute for its lifetime (1 h), and so in provenance, until an UpdateAttribute deletes it. A failed GET (4xx or 5xx) must be wired to a retry or hold queue, never auto-terminated. The diode must carry many files.
 - **Pick when:** digests must be exact, layer-level recovery is needed, and the transfer path already carries many FlowFiles. The diode high side uses this transfer.
@@ -50,7 +50,7 @@ A container image layer is often several GB. Every option below keeps the layer 
 
 ### O3: loopback ListenHTTP, no staging disk
 
-- **Flow:** `GenerateFlowFile` (primary node) -> `ExecuteStreamCommand` running a stdlib script that reads the blob from the registry and streams it as a chunked POST to `https://127.0.0.1:<port>/blobs` on the same node -> `ListenHTTP` (Base Path `blobs`, SSL Context Service, Client Authentication `REQUIRED`, Authorized Subject DN, HTTP Headers for Attributes `X-.*|filename`) -> native FlowFile content. See [nifi-by-hand-o3-loopback.md](../archive/nifi-by-hand-o3-loopback.md).
+- **Flow:** `GenerateFlowFile` (primary node) -> `ExecuteStreamCommand` running a stdlib script that reads the blob from the registry and streams it as a chunked POST to `https://127.0.0.1:<port>/blobs` on the same node -> `ListenHTTP` (Base Path `blobs`, SSL Context Service, Client Authentication `REQUIRED`, Authorized Subject DN, HTTP Headers for Attributes `X-.*|filename`) -> native FlowFile content. The by-hand page (nifi-by-hand-o3-loopback.md) was removed with the archive on 2026-11-23.
 - **Pros:** no staging disk, one copy in the content repository, no Python memory growth (VmHWM 25 MB). Attributes travel as headers.
 - **Cons:** `ListenHTTP` has no bind-address property, so it listens on every interface and another pod can reach it. Use mTLS with Authorized Subject DN. A shared token in a header would land in provenance. Jetty rejects an IP host, so the client must send the certificate name as SNI and `Host` while it connects to 127.0.0.1 (otherwise `400 Invalid SNI`). Back pressure is checked only on every 5th request (SOURCE, `ListenHTTPServlet`, `FILES_BEFORE_CHECKING_DESTINATION_SPACE = 5`), then the server answers 503 before reading the body, so the client sees a closed connection and up to 5 FlowFiles can overshoot the threshold. The blob FlowFile and the marker FlowFile are separate and correlate only through headers.
 - **Pick when:** no staging disk is allowed and the extra components are acceptable.
@@ -59,7 +59,7 @@ A container image layer is often several GB. Every option below keeps the layer 
 
 ### O4: ExecuteStreamCommand push from content via stdin
 
-- **Flow:** the blob or manifest FlowFile is already native content. `RouteOnAttribute` on `kind`, `UpdateAttribute` for the reference, then `ExecuteStreamCommand` runs [push_from_stdin.py](../../python/scripts/push_from_stdin.py), which reads stdin and talks to the registry. A `RouteOnAttribute` on `execution.status` drops the pushed FlowFile and a `RetryFlowFile` retries the rest. See [nifi-by-hand-o4-push.md](../archive/nifi-by-hand-o4-push.md).
+- **Flow:** the blob or manifest FlowFile is already native content. `RouteOnAttribute` on `kind`, `UpdateAttribute` for the reference, then `ExecuteStreamCommand` runs `push_from_stdin.py` (removed 2026-11-23), which reads stdin and talks to the registry. A `RouteOnAttribute` on `execution.status` drops the pushed FlowFile and a `RetryFlowFile` retries the rest. The by-hand page (nifi-by-hand-o4-push.md) was removed with the archive on 2026-11-23.
 - **Pros:** no staging disk and no Python memory growth (one 1 MiB buffer). Exit codes route failures. The script is plain stdlib and is edited without a NiFi restart.
 - **Cons:** the script must exist at the same path on every node, for example on a shared ReadWriteMany mount. Properties become arguments and environment variables, not the typed property UI. The registry password reaches the script as an environment variable: masked in NiFi, but readable in `/proc/<pid>/environ` and `ps eww` by the same uid and by root. A non-zero exit leaves the partial output on the FlowFile until terminated, and with Output Destination Attribute the only relationship is `original`, so failure shows only in `execution.status`.
 - **Pick when:** the layers already exist as FlowFiles (O2, O3) or the tar was unpacked, and the push should not use a Python processor.
@@ -74,7 +74,7 @@ A container image layer is often several GB. Every option below keeps the layer 
 
 ## Decision
 
-- **O1 is the default** for tar-shaped flows (Pull and Export as shipped). It needs no new code.
+- **O1 is the default** for tar-shaped flows (Pull and Export as shipped). It needs no new code. Superseded by [ADR 0008](adr-0008-remove-tar-processors.md): 1.6.0 removes O1, and PlanRegistryTransfer with RouteRegistryTransfer ([ADR 0007](adr-0007-compact-native-layer-transfer.md)) is the only Python option.
 - **The diode high side uses the O2 transfer with the O4 push.** It keeps digests exact, resends lost layers by number, and keeps layer bytes out of Python.
 - **O3 is for when no staging disk is allowed.**
 - The MergeContent tar, the chunk loop and Groovy are rejected for the reasons above.
@@ -83,7 +83,7 @@ No option dominates: the choice is tar-shaped (O1) against layer-shaped (O2, O3,
 
 ## Consequences
 
-- Three stdlib scripts ship in `python/scripts/`, with unit tests against a fake registry or a local HTTP server: `push_from_stdin.py` (O4), `manifest_gate.py` (O2 gate) and `post_blob_loopback.py` (O3 poster). The gate and the poster import `push_from_stdin.py` for authentication, so deploy the three together.
-- The by-hand pages are [O4 push](../archive/nifi-by-hand-o4-push.md), [O2 layer flow](../archive/nifi-by-hand-o2-layer-flow.md) and [O3 loopback](../archive/nifi-by-hand-o3-loopback.md).
+- Three stdlib scripts (`push_from_stdin.py` for O4, `manifest_gate.py` for the O2 gate, `post_blob_loopback.py` for the O3 poster) shipped in `python/scripts/` with unit tests. They were removed on 2026-11-23, with the archived by-hand pages: only PlanRegistryTransfer and RouteRegistryTransfer with native InvokeHTTP are in use. They remain in git history.
+- The O2, O3 and O4 by-hand pages lived in `docs/archive/` until the same removal.
 - A registry token held in a FlowFile attribute (O2) shows in provenance; delete the attribute before the crossing and mint a new token on the high side.
 - Open: O4 at 1 GiB on the cluster, Round Robin pairing for O3, provenance replay, and the mirror.py CLI importer reading a MergeContent tar.

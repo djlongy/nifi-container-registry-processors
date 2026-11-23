@@ -4,6 +4,25 @@
   },
   "objects": [
     {
+      "type": "controller_service",
+      "name": "SignalRedis",
+      "service_type": "org.apache.nifi.redis.service.RedisConnectionPoolService",
+      "properties": {
+        "Redis Mode": "Standalone",
+        "Connection String": "#{signal.redis.host}:#{signal.redis.port}",
+        "Password": "#{signal.redis.password}"
+      }
+    },
+    {
+      "type": "controller_service",
+      "name": "SignalCache",
+      "service_type": "org.apache.nifi.redis.service.RedisDistributedMapCacheClientService",
+      "properties": {
+        "Redis Connection Pool": "@SignalRedis",
+        "TTL": "7 days"
+      }
+    },
+    {
       "type": "input_port",
       "name": "FromDiode"
     },
@@ -16,8 +35,7 @@
         "Registry URL": "#{gitlab.container.url}",
         "Registry Username": "#{gitlab.container.username}",
         "Registry Password": "#{gitlab.container.token}",
-        "Target Repository": "#{gitlab.container.repository}",
-        "Stale After Hours": "24"
+        "Target Repository": "#{gitlab.container.repository}"
       },
       "auto_terminated": [
         "original",
@@ -26,7 +44,7 @@
       "bundle": {
         "group": "org.apache.nifi",
         "artifact": "python-extensions",
-        "version": "1.5.3"
+        "version": "1.7.0"
       }
     },
     {
@@ -91,11 +109,81 @@
     },
     {
       "type": "processor",
-      "name": "StaleImages",
+      "name": "SignalOwner",
+      "processor_type": "org.apache.nifi.processors.standard.Notify",
+      "properties": {
+        "Release Signal Identifier": "${registry.signal.id}",
+        "Signal Counter Name": "received",
+        "Signal Counter Delta": "1",
+        "Distributed Cache Service": "@SignalCache"
+      },
+      "auto_terminated": [],
+      "bundle": {
+        "group": "org.apache.nifi",
+        "artifact": "nifi-standard-nar",
+        "version": "2.12.0"
+      }
+    },
+    {
+      "type": "processor",
+      "name": "WaitForLayers",
+      "processor_type": "org.apache.nifi.processors.standard.Wait",
+      "properties": {
+        "Release Signal Identifier": "${registry.digest}",
+        "Target Signal Count": "${registry.wait.expected}",
+        "Signal Counter Name": "received",
+        "Releasable FlowFile Count": "1",
+        "Expiration Duration": "10 min",
+        "Wait Mode": "keep",
+        "Wait Penalty Duration": "30 sec",
+        "Distributed Cache Service": "@SignalCache"
+      },
+      "auto_terminated": [],
+      "bundle": {
+        "group": "org.apache.nifi",
+        "artifact": "nifi-standard-nar",
+        "version": "2.12.0"
+      }
+    },
+    {
+      "type": "processor",
+      "name": "RetryWait",
+      "processor_type": "org.apache.nifi.processors.standard.RetryFlowFile",
+      "properties": {
+        "Retry Attribute": "registry.wait.retries",
+        "Maximum Retries": "144",
+        "Penalize Retries": "true"
+      },
+      "auto_terminated": [],
+      "bundle": {
+        "group": "org.apache.nifi",
+        "artifact": "nifi-standard-nar",
+        "version": "2.12.0"
+      }
+    },
+    {
+      "type": "processor",
+      "name": "ReportIncomplete",
       "processor_type": "org.apache.nifi.processors.standard.LogMessage",
       "properties": {
         "Log Level": "warn",
-        "Log Prefix": "StaleImages: ",
+        "Log Prefix": "ReportIncomplete: ",
+        "Log Message": "${registry.error}; received ${registry.wait.received} of ${registry.wait.expected}, awaiting ${registry.wait.missing}, manifest ${registry.manifest.digest}"
+      },
+      "auto_terminated": [],
+      "bundle": {
+        "group": "org.apache.nifi",
+        "artifact": "nifi-standard-nar",
+        "version": "2.12.0"
+      }
+    },
+    {
+      "type": "processor",
+      "name": "IncompleteImages",
+      "processor_type": "org.apache.nifi.processors.standard.LogMessage",
+      "properties": {
+        "Log Level": "warn",
+        "Log Prefix": "IncompleteImages: ",
         "Log Message": "discarded ${registry.image} ${registry.platform} ${registry.kind} ${registry.digest}: ${registry.error}"
       },
       "auto_terminated": [
@@ -122,17 +210,6 @@
       "target": "UploadContent",
       "relationships": [
         "prepared"
-      ],
-      "back_pressure_data_size_threshold": "20 GB",
-      "back_pressure_object_threshold": 10000
-    },
-    {
-      "type": "connection",
-      "source": "RouteTransfer",
-      "target": "RetryTransfer",
-      "relationships": [
-        "retryable",
-        "waiting"
       ],
       "back_pressure_data_size_threshold": "20 GB",
       "back_pressure_object_threshold": 10000
@@ -185,11 +262,104 @@
     {
       "type": "connection",
       "source": "RouteTransfer",
-      "target": "StaleImages",
+      "target": "RetryTransfer",
       "relationships": [
-        "stale"
+        "retryable"
       ],
       "back_pressure_data_size_threshold": "20 GB",
+      "back_pressure_object_threshold": 10000
+    },
+    {
+      "type": "connection",
+      "source": "RouteTransfer",
+      "target": "SignalOwner",
+      "relationships": [
+        "signal"
+      ],
+      "back_pressure_data_size_threshold": "20 GB",
+      "back_pressure_object_threshold": 10000
+    },
+    {
+      "type": "connection",
+      "source": "SignalOwner",
+      "target": "RouteTransfer",
+      "relationships": [
+        "success",
+        "failure"
+      ],
+      "back_pressure_data_size_threshold": "20 GB",
+      "back_pressure_object_threshold": 10000
+    },
+    {
+      "type": "connection",
+      "source": "RouteTransfer",
+      "target": "WaitForLayers",
+      "relationships": [
+        "waiting"
+      ],
+      "back_pressure_data_size_threshold": "1 GB",
+      "back_pressure_object_threshold": 10000
+    },
+    {
+      "type": "connection",
+      "source": "WaitForLayers",
+      "target": "RouteTransfer",
+      "relationships": [
+        "success"
+      ],
+      "back_pressure_data_size_threshold": "1 GB",
+      "back_pressure_object_threshold": 10000
+    },
+    {
+      "type": "connection",
+      "source": "WaitForLayers",
+      "target": "WaitForLayers",
+      "relationships": [
+        "wait"
+      ],
+      "back_pressure_data_size_threshold": "1 GB",
+      "back_pressure_object_threshold": 10000
+    },
+    {
+      "type": "connection",
+      "source": "WaitForLayers",
+      "target": "RetryWait",
+      "relationships": [
+        "expired",
+        "failure"
+      ],
+      "back_pressure_data_size_threshold": "1 GB",
+      "back_pressure_object_threshold": 10000
+    },
+    {
+      "type": "connection",
+      "source": "RetryWait",
+      "target": "RouteTransfer",
+      "relationships": [
+        "retry"
+      ],
+      "back_pressure_data_size_threshold": "1 GB",
+      "back_pressure_object_threshold": 10000
+    },
+    {
+      "type": "connection",
+      "source": "RetryWait",
+      "target": "ReportIncomplete",
+      "relationships": [
+        "retries_exceeded",
+        "failure"
+      ],
+      "back_pressure_data_size_threshold": "1 GB",
+      "back_pressure_object_threshold": 10000
+    },
+    {
+      "type": "connection",
+      "source": "ReportIncomplete",
+      "target": "IncompleteImages",
+      "relationships": [
+        "success"
+      ],
+      "back_pressure_data_size_threshold": "1 GB",
       "back_pressure_object_threshold": 10000
     }
   ]

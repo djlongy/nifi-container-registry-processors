@@ -2,14 +2,14 @@
 title: Property reference
 type: reference
 status: current
-updated: 2026-10-14
+updated: 2026-10-22
 ---
 
 # Property reference
 
-The property tables (name, required, default, description) for PullContainerImages, ExportContainerImages, PlanRegistryTransfer and PushContainerImages are generated from the code and kept in two places that a unit test keeps in step with the code:
+The property tables (name, required, default, description) for PlanRegistryTransfer and RouteRegistryTransfer are generated from the code and kept in two places that a unit test keeps in step with the code:
 
 - [README.md, Properties](../../README.md#properties)
 - [python/container-registry/README.md, Properties](../../python/container-registry/README.md#properties)
 
-The migration table from 1.4.x names is in the README under "Upgrading from 1.4.x or earlier: renamed and removed properties".
+The properties of the tar processors removed in 1.6.0 are in the 1.5.x README ([ADR 0008](../decisions/adr-0008-remove-tar-processors.md)).

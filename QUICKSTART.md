@@ -1,10 +1,10 @@
 # Quickstart
 
-To move images across a data diode, build [the image transfer runbook](docs/runbooks/image-transfer-build-by-hand.md) instead: it is the supported transfer. This quickstart is the smaller single-NiFi flow. It gets one container image from a source registry into a target registry through NiFi 2.x, using the Python processors and the gitlab-registry-mirror webhook. All hosts and passwords below are placeholders. For every property and the scheduled Pull flow, see [README.md](README.md). For the same flow built click by click in the UI, see [docs/runbooks/nifi-by-hand.md](docs/runbooks/nifi-by-hand.md).
+The shortest path to one container image moved through PlanRegistryTransfer and RouteRegistryTransfer, with both sides on one NiFi 2.x instance as a test. The full flow, every property and connection, and the recovery steps are in [the image transfer build guide](docs/runbooks/image-transfer-build-by-hand.md). This page does not repeat them. All hosts and passwords below are placeholders.
 
-You need: NiFi 2.x with Python enabled (`nifi.python.command` set), shell access to the NiFi node, `keytool` (any JDK), and an image in the source registry.
+You need: NiFi 2.x with Python enabled (`nifi.python.command` set), shell access to the NiFi node, a source and a target registry, and a small image in the source registry.
 
-## 1. Install the extensions
+## 1. Install the processors
 
 On every NiFi node:
 
@@ -13,97 +13,37 @@ git clone https://github.com/djlongy/nifi-container-registry-processors.git
 cp -r nifi-container-registry-processors/python/container-registry /opt/nifi/nifi-current/python_extensions/
 ```
 
-Use the directory `nifi.python.extensions.source.directory.default` names in `nifi.properties` if it is not `./python_extensions`. Within a minute `PullContainerImages`, `ExportContainerImages` and `PushContainerImages` 1.5.3 appear in **Add Processor** (filter on `container`). Nothing is installed from PyPI.
+Use the directory `nifi.python.extensions.source.directory.default` names in `nifi.properties` if it is not `./python_extensions`. Within a minute `PlanRegistryTransfer` and `RouteRegistryTransfer` 1.7.0 appear in **Add Processor** (filter on `registry`). Nothing is installed from PyPI.
 
-## 2. Trust the registry CA (SSL Context Service)
+## 2. Build the two groups
 
-Skip this when the registries use certificates from a public CA. StandardSSLContextService reads a PKCS12 or JKS truststore; it does not accept a PEM file, so convert the CA first:
+Make two process groups on one canvas, `ImageTransferLowSide` and `ImageTransferHighSide`, each with its own parameter context:
 
-```sh
-keytool -importcert -noprompt -alias registry-ca -file ca.crt \
-  -keystore /opt/nifi/nifi-current/conf/registry-truststore.p12 -storetype PKCS12 -storepass changeit
-```
-
-In NiFi: **Controller Settings > Controller Services > +**, add **StandardSSLContextService** with:
-
-| Property | Value |
-|---|---|
-| Truststore Filename | `/opt/nifi/nifi-current/conf/registry-truststore.p12` |
-| Truststore Password | `changeit` |
-| Truststore Type | `PKCS12` |
-
-Enable it. The processors trust these CAs in addition to the system store.
-
-## 3. Parameter context with the passwords
-
-**Parameter Contexts > +**, name it `registry`, and add (this NiFi holds both registries, so the names carry the side: `low` is the source, `high` the target):
-
-| Parameter | Sensitive | Value |
+| Group | Parameters | Build guide |
 |---|---|---|
-| `gitlab.container.low.username` | No | `svc-mirror-read` |
-| `gitlab.container.low.token` | Yes | the source registry token |
-| `gitlab.container.high.username` | No | `svc-mirror-write` |
-| `gitlab.container.high.token` | Yes | the target registry token |
-| `gitlab.container.tar.dir` | No | `/data/out` |
+| `ImageTransferLowSide` | `gitlab.container.url`, `.username`, `.token` (sensitive), `.allowed.repositories`, `.platforms` for the source | [Low side](docs/runbooks/image-transfer-build-by-hand.md#low-side), L1 to L7 |
+| `ImageTransferHighSide` | `gitlab.container.url`, `.username`, `.token` (sensitive), `.repository` for the target | [High side](docs/runbooks/image-transfer-build-by-hand.md#high-side), H1 to H7 |
 
-The last one is the directory Export writes tars to and Push reads them from. A parameter means you can change it later without restarting NiFi (NiFi stops and restarts the processors that use it). Use a dedicated per-node volume at the same path on every node, never inside NiFi's content, FlowFile or provenance repository directories; see [README.md](README.md#where-to-put-the-tar-directory).
+Two contexts keep the side-free names apart and keep source credentials out of the high group. With the NiFi MCP server, [compact-layer-low-mcp-spec.json](docs/flows/compact-layer-low-mcp-spec.json) and [compact-layer-high-mcp-spec.json](docs/flows/compact-layer-high-mcp-spec.json) build each group in one call. They carry no credentials or trust services: bind the contexts and set trust afterwards.
 
-Bind it to the process group you build in (right-click the group > **Configure > Parameter Context**).
+On the parent canvas connect the low group's `ToDiode` port to the high group's `FromDiode` port, as in [L8](docs/runbooks/image-transfer-build-by-hand.md#l8-send-across-the-diode). This connection stands in for the diode.
 
-## 4. Build the flow
+## 3. Start it
 
-Add a process group and these processors, in this order, connecting each relationship named below:
+Start the high group first, then the low group. Keep the LogMessage (Hold) cards **disabled**: their queues keep failures. Every other card must validate with no red warning icon.
 
-| # | Processor | Properties | Relationship to the next |
-|---|---|---|---|
-| 1 | ListenHTTP | Listening Port `8081`, Base Path `contentListener`, HTTP Headers for Attributes `X-.*` | success |
-| 2 | RouteOnAttribute | Routing Strategy `Route to Property name`, new property `request` = `${X-Artifact-Type:equals('container-images-request')}` | request. Auto-terminate `unmatched` |
-| 3 | ExportContainerImages | Source Registry URL `https://registry.example.com`, Source Registry Username `#{gitlab.container.low.username}`, Source Registry Password `#{gitlab.container.low.token}`, SSL Context Service the one from step 2, Allowed Repositories `team/*`, Tar Output Directory `#{gitlab.container.tar.dir}` | success. failure to a LogAttribute or a funnel |
-| 4 | PushContainerImages | Target Registry URL `https://registry-high.example.com`, Target Registry Username `#{gitlab.container.high.username}`, Target Registry Password `#{gitlab.container.high.token}`, SSL Context Service the same, Input Tar Path `#{gitlab.container.tar.dir}/${filename}`, Delete Input Tar `true` | success: auto-terminate. failure to a LogAttribute or a funnel |
+## 4. Send one request
 
-The directory (`/data/out`) must exist and be writable by the NiFi user. Export writes the tar there and Push reads it by path, so both processors must run on the same node, or the directory must be shared storage mounted at the same path on every node.
+Get the image's real manifest digest from the source registry, then post the request body with its `X-Sha256`. The build guide's [L9, Manual first request](docs/runbooks/image-transfer-build-by-hand.md#l9-publish-the-webhook-and-connect-gitlab) has a script that does both. On one NiFi the URL is `http://<nifi-host>:9617/image-transfer-webhook`.
 
-Start all processors. They are valid when none shows a red warning icon.
+`HTTP 202` means ListenHTTP accepted the request, not that the transfer worked.
 
-## 5. Send one webhook
-
-Pick an image and get its digest from the source registry:
-
-```sh
-DIGEST=$(curl -sI -u "$USER:$TOKEN" \
-  -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
-  https://registry.example.com/v2/team/app/manifests/1.0 | tr -d '\r' | awk -F': ' 'tolower($1)=="docker-content-digest"{print $2}')
-echo "$DIGEST"
-```
-
-Write the body to a file, hash that exact file, and post it unchanged (`--data-binary` sends the bytes as they are):
-
-```sh
-cat > body.json <<JSON
-{"registry": "registry.example.com", "images": [{"repository": "team/app", "tag": "1.0", "digest": "$DIGEST"}]}
-JSON
-SHA=$(sha256sum body.json | cut -d' ' -f1)    # macOS: shasum -a 256 body.json | cut -d' ' -f1
-curl -i -X POST http://nifi.example.com:8081/contentListener \
-  -H 'X-Artifact-Type: container-images-request' \
-  -H "X-Sha256: $SHA" \
-  --data-binary @body.json
-```
-
-The sender may add `X-CI-Project`, `X-CI-Pipeline-Url`, `X-CI-Commit-Sha`, `X-Image-Count` and `X-Registry` headers. They stay on the FlowFile as attributes for routing and display and are never used to select or check images: only the body, `X-Sha256` and the registry's own digest count. Export also adds `registry.image.count` and `registry.image.N.repository`, `.tag` and `.digest` (N from 0).
-
-`HTTP/1.1 200 OK` means ListenHTTP accepted it, not that the push worked.
-
-## 6. Check it
-
-- In NiFi, the Export and Push processors show one FlowFile in and out in their stats. Right-click Push > **View data provenance**, open the newest event and read its attributes: `registry.pushed` is `1`, or `registry.present` is `1` when the image was already there.
-- On the target:
+## 5. Check it
 
 ```sh
 skopeo inspect --raw docker://registry-high.example.com/team/app:1.0 | sha256sum
 ```
 
-The digest matches `$DIGEST`.
+The digest matches the one in the request. Every work queue drains to zero, and the queues into the Hold cards stay empty.
 
-If a FlowFile sits in a `failure` queue, **List queue > View the attributes**, and read `registry.error`. The common causes: `X-Sha256 is missing or is not the sha256 of the body` (the body was edited after hashing, or a trailing newline differs), `... is not in Allowed Repositories`, and `the body names registry X, not Y` (the body's `registry` must be the host of Source Registry URL).
-
-To get one tar and one FlowFile per image, set Tar Per Image to `true` on Export and add SplitText and EvaluateJsonPath between Export and Push: see the README, "One tar per image". The default `false` writes one tar for all images and stores shared layers once.
+A FlowFile held in front of a Hold card carries `registry.error`: **List queue**, open the row, **Attributes**. The texts and their causes are in the [input contract](docs/reference/contract.md). To resend an image or chosen layers, see [L11](docs/runbooks/image-transfer-build-by-hand.md#l11-recover-a-held-or-incomplete-transfer).

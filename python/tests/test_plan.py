@@ -130,6 +130,15 @@ class Indexes(PlanBase):
         self.assertEqual(base64.b64decode(manifests[-1]["body"]), self.registry.manifests[("team/app", root)][0])
         self.assertEqual({j["check"] for j in jobs}, {root[7:15]})
 
+    def test_every_job_names_the_manifests_it_signals_and_a_shared_blob_crosses_once(self):
+        root, amd, arm = self.index()
+        jobs, _ = self.jobs(FlowFile(**{"registry.image.reference": "team/app:multi"}))
+        owners = {j["digest"]: j["owners"] for j in jobs}
+        blobs = [j for j in jobs if j["kind"] in ("blob", "config")]
+        self.assertEqual(len(blobs), 2)  # both platforms hold the same config and layer
+        self.assertEqual([j["owners"] for j in blobs], [[amd, arm], [amd, arm]])
+        self.assertEqual((owners[amd], owners[arm], owners[root]), ([root], [root], []))
+
     def test_a_platform_selection_drops_the_index_and_tags_the_one_match(self):
         _root, amd, arm = self.index()
         jobs, _ = self.jobs(FlowFile(**{"registry.image.reference": "team/app:multi"}),

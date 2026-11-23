@@ -1,6 +1,6 @@
 # Build the image transfer by hand
 
-The image transfer moves a container image across a data diode one layer at a time. The low side reads the source registry and sends one FlowFile per blob and per manifest. The high side checks that every layer a manifest needs has arrived, uploads the blobs, then commits the manifest by digest and by tag. This guide is for **NiFi 2.12.0** with **PlanRegistryTransfer / RouteRegistryTransfer 1.5.3**.
+The image transfer moves a container image across a data diode one layer at a time. The low side reads the source registry and sends one FlowFile per blob and per manifest. The high side checks that every layer a manifest needs has arrived, uploads the blobs, then commits the manifest by digest and by tag. This guide is for **NiFi 2.12.0** with **PlanRegistryTransfer / RouteRegistryTransfer 1.7.0**.
 
 The two sides are built on different NiFi instances at work, so the guide is split the same way:
 
@@ -27,7 +27,7 @@ git checkout 559c53aa6e7bac04f53c83239dc3b184531caad7
 cp -R python/container-registry /opt/nifi/nifi-current/python_extensions/
 ```
 
-Run the copy as the NiFi service account, or set ownership so that account can read the files and write its Python working directory. Adjust the destination to `nifi.python.extensions.source.directory.default` in `nifi.properties`. Set `nifi.python.command` to your Python executable if Python is not enabled. Changing NiFi startup properties requires a restart; copying extension files is discovered by the loader. On a cluster install the same files on **every node**, then wait until the processor types at **1.5.3** appear in **Add Processor** and validate across the cluster. Do not change an existing Python processor's bundle version by API; create it at the installed version.
+Run the copy as the NiFi service account, or set ownership so that account can read the files and write its Python working directory. Adjust the destination to `nifi.python.extensions.source.directory.default` in `nifi.properties`. Set `nifi.python.command` to your Python executable if Python is not enabled. Changing NiFi startup properties requires a restart; copying extension files is discovered by the loader. On a cluster install the same files on **every node**, then wait until the processor types at **1.7.0** appear in **Add Processor** and validate across the cluster. Do not change an existing Python processor's bundle version by API; create it at the installed version.
 
 For containers, persist the modules through an image or init container or a mounted source directory. A manual copy is lost if your init container replaces that directory at restart. Do not install the older Java/NAR implementation for this flow.
 
@@ -86,9 +86,9 @@ Use **Add Processor**, search for the type, pick the exact version and keep NiFi
 | Type | Version | Initial state |
 |---|---|---|
 | ListenHTTP | 2.12.0 | Stopped while configuring |
-| PlanRegistryTransfer | 1.5.3 | Stopped while configuring |
+| PlanRegistryTransfer | 1.7.0 | Stopped while configuring |
 | SplitJson | 2.12.0 | Stopped while configuring |
-| RouteRegistryTransfer | 1.5.3 | Stopped while configuring |
+| RouteRegistryTransfer | 1.7.0 | Stopped while configuring |
 | InvokeHTTP | 2.12.0 | Stopped while configuring |
 | CryptographicHashContent | 2.12.0 | Stopped while configuring |
 | RetryFlowFile | 2.12.0 | Stopped while configuring |
@@ -164,7 +164,7 @@ This splits the small job JSON, never a downloaded blob.
 | `complete` | Checked bytes, ready for the diode | Output Port `ToDiode` |
 | `retryable` | A transient error that can be retried | RetryFlowFile |
 | `failure` | A permanent condition, content kept (also used if the processor raises) | LogMessage |
-| `waiting`, `stale` | Used on the high side only | Auto-terminate |
+| `signal`, `waiting` | Used on the high side only | Auto-terminate |
 
 #### InvokeHTTP: 6 properties
 
@@ -276,7 +276,7 @@ In each processor's **Configure, Settings, Automatically Terminate Relationships
 | ListenHTTP | None |
 | PlanRegistryTransfer | `original` |
 | SplitJson | `original` |
-| RouteRegistryTransfer | `original`, `stale`, `waiting` |
+| RouteRegistryTransfer | `original`, `signal`, `waiting` |
 | InvokeHTTP | `Original` |
 | CryptographicHashContent | None |
 | RetryFlowFile | None |
@@ -306,7 +306,7 @@ Keep the two connections from InvokeHTTP to RouteRegistryTransfer on separate pa
 
 ### L8. Send across the diode
 
-Every FlowFile `ToDiode` emits is one blob or one manifest. Your diode integration must carry each FlowFile's **exact bytes and attributes** to the high side, including `registry.kind`, `repository`, `digest`, `size`, `media.type`, `reference`, `needs`, `image`, `platform`, `check` and `layer.count` (all with the `registry.` prefix), and `content_SHA-256`. `registry.auth.header` is empty at this point; do not serialize credentials or parameter contexts with the jobs. Delivery may be in any order, and any number of FlowFiles may be in flight.
+Every FlowFile `ToDiode` emits is one blob or one manifest. Your diode integration must carry each FlowFile's **exact bytes and attributes** to the high side, including `registry.kind`, `repository`, `digest`, `size`, `media.type`, `reference`, `needs`, `owners`, `image`, `platform`, `check` and `layer.count` (all with the `registry.` prefix), and `content_SHA-256`. `registry.auth.header` is empty at this point; do not serialize credentials or parameter contexts with the jobs. Delivery may be in any order, and any number of FlowFiles may be in flight.
 
 At work, connect `ToDiode` to your diode sender. The sender configuration is supplied by your diode operator and is not implemented by this port.
 
@@ -442,7 +442,7 @@ For bandwidth-sensitive recovery, read the high-side bulletin's image, platform,
 | registry.check | `a1b2c3d4` (exact bulletin code) |
 | registry.platform | `linux/amd64` (exact bulletin platform; optional for a single-platform image) |
 
-Enable, apply, Run Once, clear these four properties, then Disable, with Primary node and a batch of one. The planner refuses a stale check code if the tag moved. Selective replay sends the **small config plus the selected layers**, not a manifest and not the other layers. The existing high-side manifest must still be waiting in its retry queue or in `StaleImages`. If it exhausted its retries into LogMessage, resending layers alone will not commit it: requeue that manifest with its retry counter reset, or use whole-image mode.
+Enable, apply, Run Once, clear these four properties, then Disable, with Primary node and a batch of one. The planner refuses a stale check code if the tag moved. Selective replay sends the **small config plus the selected layers**, not a manifest and not the other layers. The existing high-side manifest must still be waiting at WaitForLayers: each resent layer signals it and it moves on as soon as the last one is in. If it already reached IncompleteImages, resending layers alone will not commit it: use whole-image mode, which resends the manifest too.
 
 Both modes were verified on the live Quay and NiFi pair, including a whole-image Run Once after the unique layer file was removed from active high-side storage; NiFi recreated it with the exact SHA-256 and size. See [the reproducible evidence and proof boundary](image-transfer-recovery-proof.md). No scheduled resend is supplied; recovery is operator-triggered.
 
@@ -468,7 +468,7 @@ After everything is wired and verified, you can give the cards descriptive names
 
 The high side writes to the destination registry. It is built on the high NiFi instance, inside a process group named `ImageTransferHighSide`.
 
-How it works: the diode delivers one FlowFile per blob or manifest into `FromDiode`. `RouteRegistryTransfer` prepares an upload request, `InvokeHTTP` sends the blob bytes, and `RouteRegistryTransfer` checks dependencies before it commits a manifest: by digest first, then by tag. A manifest whose layers have not all arrived waits quietly and passes through `RetryFlowFile` until they do.
+How it works: the diode delivers one FlowFile per blob or manifest into `FromDiode`. `RouteRegistryTransfer` prepares an upload request, `InvokeHTTP` sends the blob bytes, and `RouteRegistryTransfer` checks dependencies before it commits a manifest: by digest first, then by tag. A manifest whose layers have not all arrived waits at a native `Wait`, keyed by its own digest. Each blob or manifest the registry now holds signals the manifests that need it through a native `Notify`, so a waiting manifest moves on as soon as its last dependency is in. Wait's expiry makes `RouteRegistryTransfer` look at the registry again anyway, and a `RetryFlowFile` bounds how often, after which the manifest goes to a fail queue. Design: [ADR 0009](../decisions/adr-0009-notify-wait-manifests.md).
 
 ### High screenshot
 
@@ -487,8 +487,10 @@ On the high NiFi instance, create a **Process Group** named `ImageTransferHighSi
 | `gitlab.container.token` | **Yes** | Your destination robot token |
 | `gitlab.container.repository` | No | `team/app-mirror`; blank keeps each source repository path instead |
 | `truststore_password` | **Yes** | Only when you create the optional `RegistryTrust` service below |
+| `signal.redis.host`, `signal.redis.port` | No | The Redis every high node reaches, for Notify and Wait, such as `redis.nifi.svc` and `6379` |
+| `signal.redis.password` | **Yes** | That Redis's password, if it has one |
 
-The destination URL, user and password come from this context, never from FlowFile attributes. If you mirror several source repositories, leave `gitlab.container.repository` blank to preserve their paths; a single override can make equal tags from different sources overwrite each other.
+The destination URL, user and password come from this context, never from FlowFile attributes. **Signal cache.** Notify and Wait keep their counters in a cache every high node reaches, so a layer stored on one node releases a manifest waiting on another. Create **Controller Services, +, RedisConnectionPoolService 2.12.0** named `SignalRedis` (Redis Mode `Standalone`, Connection String `#{signal.redis.host}:#{signal.redis.port}`, Password `#{signal.redis.password}`), then **RedisDistributedMapCacheClientService 2.12.0** named `SignalCache` (Redis Connection Pool `SignalRedis`, TTL `7 days`), and enable both. A MapCacheClientService pointed at `localhost` gives each node its own cache: a manifest then only moves on at its next Wait expiry. If you mirror several source repositories, leave `gitlab.container.repository` blank to preserve their paths; a single override can make equal tags from different sources overwrite each other.
 
 **Optional private-CA trust.** If the destination registry's certificate is trusted by the system store, leave every **SSL Context Service** property blank. For a private CA, create **Controller Services, +, StandardSSLContextService 2.12.0**, name it `RegistryTrust`, and enable it before selecting it. Set only these properties:
 
@@ -513,13 +515,17 @@ Use **Add Processor**, search for the type, pick the exact version and keep NiFi
 
 | Type | Version | Initial state |
 |---|---|---|
-| RouteRegistryTransfer | 1.5.3 | Stopped while configuring |
+| RouteRegistryTransfer | 1.7.0 | Stopped while configuring |
 | InvokeHTTP | 2.12.0 | Stopped while configuring |
-| RetryFlowFile | 2.12.0 | Stopped while configuring |
+| RetryFlowFile (errors) | 2.12.0 | Stopped while configuring |
+| Notify | 2.12.0 | Stopped while configuring |
+| Wait | 2.12.0 | Stopped while configuring |
+| RetryFlowFile (wait) | 2.12.0 | Stopped while configuring |
+| LogMessage (report) | 2.12.0 | Stopped while configuring |
 | LogMessage (failure) | 2.12.0 | **Disabled** |
-| LogMessage (stale) | 2.12.0 | **Disabled** |
+| LogMessage (incomplete) | 2.12.0 | **Disabled** |
 
-**The two LogMessage cards are parking destinations. LogMessage (failure) receives the `failure` queues and LogMessage (stale) receives the `stale` queue. Both are parking destinations, not processors you run.** After configuring each, right-click it and choose **Disable**. Their `success` relationship is auto-terminated only so their configuration is valid. **Starting either would consume and discard the parked FlowFiles.** Read [H10](#h10-recover-a-held-stale-or-incomplete-transfer) before changing their state.
+**LogMessage (failure) and LogMessage (incomplete) are parking destinations, not processors you run.** LogMessage (failure) receives the `failure` queues. LogMessage (incomplete) is the fail queue: manifests whose layers never arrived. After configuring each, right-click it and choose **Disable**. Their `success` relationship is auto-terminated only so their configuration is valid. **Starting either would consume and discard the parked FlowFiles.** LogMessage (report) runs: it turns each incomplete manifest into one WARN bulletin on its way to the fail queue. Read [H10](#h10-recover-a-held-or-incomplete-transfer) before changing their state.
 
 ### H3. Settings and scheduling changed from default
 
@@ -529,7 +535,7 @@ Everything not listed here stays at NiFi's default: Scheduling Strategy `Timer d
 |---|---|---|
 | RouteRegistryTransfer | Scheduling, Run Duration | `25 ms` |
 | LogMessage (failure) | Scheduling, Run Duration | `25 ms` |
-| LogMessage (stale) | Scheduling, Run Duration | `25 ms` |
+| LogMessage (incomplete) | Scheduling, Run Duration | `25 ms` |
 
 ### H4. Enter the properties
 
@@ -546,15 +552,15 @@ Open **Configure, Properties** on each card. Each table lists only the propertie
 | SSL Context Service | `RegistryTrust` (private CA only; otherwise leave unset) |
 | Target Repository | `#{gitlab.container.repository}` (leave unset to keep each source repository) |
 
-Request Timeout (`60` seconds) and Stale After Hours (`24`) stay at their defaults. RouteRegistryTransfer handles scoped registry authentication, metadata HEAD requests and empty upload-start POSTs. The high controller checks dependencies before a manifest PUT, commits by digest first and then by tag. Its relationships name the condition of the FlowFile when it leaves:
+Request Timeout (`60` seconds) stays at its default. RouteRegistryTransfer handles scoped registry authentication, metadata HEAD requests and empty upload-start POSTs. The high controller checks dependencies before a manifest PUT, commits by digest first and then by tag. Its relationships name the condition of the FlowFile when it leaves:
 
 | Relationship | Condition | Goes to |
 |---|---|---|
 | `prepared` | A registry request is prepared in the `registry.http.*` attributes | InvokeHTTP |
 | `complete` | Stored in the registry; this side's work is finished | Auto-terminate |
-| `retryable` | A transient error that can be retried | RetryFlowFile |
-| `waiting` | A manifest whose layers or platform manifests have not all arrived | RetryFlowFile |
-| `stale` | Still waiting after Stale After Hours | LogMessage (stale) |
+| `retryable` | A transient error that can be retried | RetryFlowFile (errors) |
+| `signal` | Stored, and a manifest needs it: once per owner, with `registry.signal.id` | Notify |
+| `waiting` | A manifest whose layers or platform manifests have not all arrived, with `registry.wait.*` | Wait |
 | `failure` | A permanent condition, content kept (also used if the processor raises) | LogMessage (failure) |
 | `unverified` | Used on the low side only; never emitted here | LogMessage (failure), as a safeguard |
 
@@ -588,14 +594,55 @@ Add **SSL Context Service** = `RegistryTrust` only when the registry's CA is out
 <a id="what-resp-is-for"></a>
 **What `resp.` is for.** Response Header Request Attributes Prefix is the text InvokeHTTP puts in front of each response header it copies onto the original FlowFile: with `resp.`, the header `Docker-Content-Digest` becomes the attribute `resp.Docker-Content-Digest`. Both properties are visible once Response Header Request Attributes Enabled is `true`. After a manifest `PUT`, RouteRegistryTransfer reads `resp.Docker-Content-Digest` or `resp.docker-content-digest` (a registry reached over HTTP/2, such as `registry:2`, sends lower-case header names) and compares it with the planned digest. When neither attribute exists, it asks the registry with a `HEAD` request for the manifest and compares that digest. The prefix must be exactly `resp.` because the controller looks up those two names. The setting is optional on the high side: leaving it off costs one extra `HEAD` per manifest `PUT`, and the transfer completes. It is not used on the low side.
 
-#### RetryFlowFile: 2 properties
+#### RetryFlowFile (errors): 2 properties
 
 | Property | Value |
 |---|---|
 | Retry Attribute | `registry.retries` |
 | Maximum Retries | `${registry.retry.max}` |
 
-RouteRegistryTransfer sets `registry.retry.max` to the current `registry.retries` plus `3` for transient HTTP errors, so they reach LogMessage (failure) after about 1.5 minutes. It sets `registry.retries` back to `0` and blanks `registry.retries.uuid` after every successful step and when a FlowFile completes, waits or goes stale, so Reuse Mode `fail` does not reject a FlowFile the low card retried. A manifest or index whose layers or platform manifests have not all arrived **waits quietly**: RouteRegistryTransfer checks its dependencies 30 seconds after the first attempt, then after 1, 2, 4, 8 and 16 minutes, then every 30 minutes, and passes through RetryFlowFile with no registry request between checks. It logs nothing while it waits; the reason is on the FlowFile as `registry.error`. When the wait exceeds Stale After Hours it goes to `stale` with one warning naming the image, platform, missing layer numbers and check code. Exhausted or malformed retries go to LogMessage (failure).
+RouteRegistryTransfer sets `registry.retry.max` to the current `registry.retries` plus `3` for transient HTTP errors, so they reach LogMessage (failure) after about 1.5 minutes. It sets `registry.retries` back to `0` and blanks `registry.retries.uuid` after every successful step and when a FlowFile completes, signals or waits, so Reuse Mode `fail` does not reject a FlowFile the low card retried. Exhausted or malformed retries go to LogMessage (failure).
+
+#### Notify: 4 properties
+
+| Property | Value |
+|---|---|
+| Release Signal Identifier | `${registry.signal.id}` |
+| Signal Counter Name | `received` |
+| Signal Counter Delta | `1` |
+| Distributed Cache Service | `SignalCache` |
+
+#### Wait: 8 properties
+
+| Property | Value |
+|---|---|
+| Release Signal Identifier | `${registry.digest}` |
+| Target Signal Count | `${registry.wait.expected}` |
+| Signal Counter Name | `received` |
+| Releasable FlowFile Count | `1` |
+| Expiration Duration | `10 min` |
+| Wait Mode | `Keep in the upstream connection` |
+| Wait Penalty Duration | `30 sec` |
+| Distributed Cache Service | `SignalCache` |
+
+A manifest or index whose layers or platform manifests have not all arrived **waits quietly** in the queue in front of Wait. It logs nothing while it waits. List that queue to see where it stands: `registry.wait.received` of `registry.wait.expected` dependencies are in the registry, `registry.wait.missing` names the digests still awaited, `registry.manifest.digest` is the digest it will be published under, and `registry.error` gives the layer numbers and the check code. Wait releases it to RouteRegistryTransfer as soon as the Notify counter reaches `registry.wait.expected`; RouteRegistryTransfer checks the registry and uploads it, or sends it back to wait. Expiration Duration is how often a waiting manifest is checked against the registry anyway, so a lost signal costs at most that long.
+
+#### RetryFlowFile (wait): 2 properties
+
+| Property | Value |
+|---|---|
+| Retry Attribute | `registry.wait.retries` |
+| Maximum Retries | `144` |
+
+One retry per Wait expiry: `144` times `10 min` is 24 hours. The attribute is separate from `registry.retries` so error retries and the wait never use up each other's count. Raise both numbers together if your diode can lag longer.
+
+#### LogMessage (report): 3 properties
+
+| Property | Value |
+|---|---|
+| Log Level | `warn` |
+| Log Prefix | `ReportIncomplete: ` (with a trailing space) |
+| Log Message | `${registry.error}; received ${registry.wait.received} of ${registry.wait.expected}, awaiting ${registry.wait.missing}, manifest ${registry.manifest.digest}` |
 
 #### LogMessage (failure): 3 properties
 
@@ -605,12 +652,12 @@ RouteRegistryTransfer sets `registry.retry.max` to the current `registry.retries
 | Log Prefix | `Hold: ` (with a trailing space) |
 | Log Message | `discarded ${registry.image} ${registry.platform} ${registry.kind} ${registry.digest}: ${registry.error}` |
 
-#### LogMessage (stale): 3 properties
+#### LogMessage (incomplete): 3 properties
 
 | Property | Value |
 |---|---|
 | Log Level | `warn` |
-| Log Prefix | `StaleImages: ` (with a trailing space) |
+| Log Prefix | `IncompleteImages: ` (with a trailing space) |
 | Log Message | `discarded ${registry.image} ${registry.platform} ${registry.kind} ${registry.digest}: ${registry.error}` |
 
 A queue the operator inspects before anything is discarded ends at a **disabled** LogMessage: FlowFiles wait in its input queue with their content and attributes, including the `registry.error` explanation. Enabling it would log each one at WARN and discard it, so the log records every discard. Do not add dynamic attributes.
@@ -619,27 +666,37 @@ A queue the operator inspects before anything is discarded ends at a **disabled*
 
 Drag from a source card's handle to its destination and choose the exact relationships in **Details**. Leave the connection name blank: the canvas shows the selected relationships. A row with several relationships is **one connection** with all of them selected.
 
-Queue settings on every high connection that is not part of a loop and is not `stale`. Everything else stays default (FlowFile Expiration `0 sec`, no prioritizer, no load balancing):
+Queue settings on the connections into LogMessage (failure). Everything else stays default (FlowFile Expiration `0 sec`, no prioritizer, no load balancing):
 
 | Setting | Value |
 |---|---|
 | Back Pressure Object Threshold | `20` |
 | Back Pressure Data Size Threshold | `20 GB` |
 
-Every connection that sits on a directed loop keeps Back Pressure Object Threshold at NiFi's default `10000`: `prepared`, `retryable, waiting`, `Failure, No Retry, Original, Retry` and `retry` (RouteRegistryTransfer sends to InvokeHTTP and RetryFlowFile, and each sends back to RouteRegistryTransfer). NiFi does not run a processor while any of its outgoing connections is full, so with a low limit on both sides of a loop each processor waits on the other and the loop stops for good once both fill. Set only Back Pressure Data Size Threshold `20 GB` on those connections.
+Every connection that sits on a directed loop keeps Back Pressure Object Threshold at NiFi's default `10000`: H2, H3 and H5 to H11 (RouteRegistryTransfer sends to InvokeHTTP, both RetryFlowFile cards, Notify and Wait, and each sends back to RouteRegistryTransfer). NiFi does not run a processor while any of its outgoing connections is full, so with a low limit on both sides of a loop each processor waits on the other and the loop stops for good once both fill. Set only Back Pressure Data Size Threshold `20 GB` on the loop connections that carry blobs (H2, H3, H5, H6, H8, H8b). H7, H9, H9b, H10 and H11 carry manifests only (a few KB each) and keep NiFi's defaults, `10000` and `1 GB`.
 
-On the `stale` connection leave Back Pressure Object Threshold at NiFi's default `10000` and set only Back Pressure Data Size Threshold `20 GB`: stale manifests are a few KB each and must never stop RouteRegistryTransfer. `20 GB` is a tested example, not a disk reservation. Choose a size larger than your largest blob and size the content repository for concurrent claims, retries and archival retention. The live test used 40 GiB content volumes on each node.
+The wait queue is H7, into Wait: with Wait Mode `Keep in the upstream connection` it is the only place a manifest waits, and Wait sends nothing to its `wait` relationship. `10000` waiting manifests is far more images than are in flight; a smaller limit could stop RouteRegistryTransfer and with it the layers those manifests wait for. A waiting manifest leaves that queue at each expiry and leaves the loop for good after RetryFlowFile (wait)'s Maximum Retries. Never set FlowFile Expiration on these connections: it drops data without a trace.
+
+H12 and H13, into LogMessage (report) and LogMessage (incomplete), keep NiFi's defaults: incomplete manifests are a few KB each. A full fail queue (10000 images that never completed) stops the wait loop on purpose. `20 GB` is a tested example, not a disk reservation. Choose a size larger than your largest blob and size the content repository for concurrent claims, retries and archival retention. The live test used 40 GiB content volumes on each node.
 
 | # | Source | Selected relationships | Destination |
 |---|---|---|---|
 | H1 | Input Port `FromDiode` | None (port) | RouteRegistryTransfer |
 | H2 | RouteRegistryTransfer | `prepared` | InvokeHTTP |
-| H3 | RouteRegistryTransfer | `retryable`, `waiting` | RetryFlowFile |
+| H3 | InvokeHTTP | `Original`, `No Retry`, `Retry`, `Failure` | RouteRegistryTransfer |
 | H4 | RouteRegistryTransfer | `failure`, `unverified` | LogMessage (failure) |
-| H5 | RouteRegistryTransfer | `stale` | LogMessage (stale) |
-| H6 | InvokeHTTP | `Original`, `No Retry`, `Retry`, `Failure` | RouteRegistryTransfer |
-| H7 | RetryFlowFile | `retry` | RouteRegistryTransfer |
-| H8 | RetryFlowFile | `retries_exceeded`, `failure` | LogMessage (failure) |
+| H5 | RouteRegistryTransfer | `retryable` | RetryFlowFile (errors) |
+| H6 | RetryFlowFile (errors) | `retry` | RouteRegistryTransfer |
+| H7 | RouteRegistryTransfer | `waiting` | Wait |
+| H8 | RouteRegistryTransfer | `signal` | Notify |
+| H8b | Notify | `success`, `failure` | RouteRegistryTransfer |
+| H9 | Wait | `success` | RouteRegistryTransfer |
+| H9b | Wait | `wait` | Wait (self-loop; stays empty in Keep mode) |
+| H10 | Wait | `expired`, `failure` | RetryFlowFile (wait) |
+| H11 | RetryFlowFile (wait) | `retry` | RouteRegistryTransfer |
+| H12 | RetryFlowFile (wait) | `retries_exceeded`, `failure` | LogMessage (report) |
+| H13 | LogMessage (report) | `success` | LogMessage (incomplete) |
+| H14 | RetryFlowFile (errors) | `retries_exceeded`, `failure` | LogMessage (failure) |
 
 The H1 connection from the `FromDiode` port has no relationship to show, so name it `FromDiode`.
 
@@ -653,56 +710,61 @@ In each processor's **Configure, Settings, Automatically Terminate Relationships
 |---|---|
 | RouteRegistryTransfer | `original`, `complete` |
 | InvokeHTTP | `Response` |
-| RetryFlowFile | None |
+| RetryFlowFile (errors), RetryFlowFile (wait), Notify, Wait, LogMessage (report) | None |
 | LogMessage (failure) | `success` (processor stays disabled) |
-| LogMessage (stale) | `success` (processor stays disabled) |
+| LogMessage (incomplete) | `success` (processor stays disabled) |
 
 No unconnected relationship may stay unterminated, or its processor stays invalid.
 
 ### H7. Layout
 
-Place the `FromDiode` port and RouteRegistryTransfer in one vertical column with LogMessage (failure) at the bottom. Put InvokeHTTP left of RetryFlowFile and LogMessage (stale) right of it. Drag approximately to these top-left canvas coordinates (not screen pixels), taken from the live canvas. Ports are narrower than processors, so they use a small horizontal centering offset. Bends only affect readability.
+Place the `FromDiode` port, RouteRegistryTransfer, Wait, RetryFlowFile (wait), LogMessage (report) and LogMessage (incomplete) in one vertical column with LogMessage (failure) at the bottom. Put Notify, RetryFlowFile (errors) and InvokeHTTP in a row to the left of Wait. Drag approximately to these top-left canvas coordinates (not screen pixels), taken from the live test canvas. Bends only affect readability.
 
 | Card | X | Y |
 |---|---|---|
 | Input Port `FromDiode` | 56 | 0 |
 | RouteRegistryTransfer | 0 | 160 |
-| InvokeHTTP | -512 | 400 |
-| RetryFlowFile | 0 | 400 |
-| LogMessage (stale) | 512 | 400 |
-| LogMessage (failure) | 0 | 640 |
+| InvokeHTTP | -2304 | 400 |
+| RetryFlowFile (errors) | -1536 | 400 |
+| Notify | -768 | 400 |
+| Wait | 0 | 400 |
+| RetryFlowFile (wait) | 0 | 640 |
+| LogMessage (report) | 0 | 880 |
+| LogMessage (incomplete) | 0 | 1120 |
+| LogMessage (failure) | 0 | 1360 |
 
-Put the long return connections in separate outer lanes and keep labels clear of cards. The [high flow spec](../flows/compact-layer-high-mcp-spec.json) is a **NiFi MCP flow spec**, not a native NiFi UI import file, and it uses the suggested card names. It omits credentials and trust services; bind your context, set trust if needed, and disable LogMessage (failure) and LogMessage (stale) before starting an imported flow. Automatic layout can replace manual bends.
+Put the long return connections in separate outer lanes and keep labels clear of cards. The [high flow spec](../flows/compact-layer-high-mcp-spec.json) is a **NiFi MCP flow spec**, not a native NiFi UI import file, and it uses the suggested card names. It omits credentials and trust services but creates `SignalRedis` and `SignalCache` from the `signal.redis.*` parameters; bind your context, set trust if needed, and disable `Hold` and `IncompleteImages` before starting an imported flow. Automatic layout can replace manual bends.
 
 ### H8. Receive from the diode
 
-Your diode receiver must deliver every FlowFile to `FromDiode` with its **exact bytes and attributes**, including `registry.kind`, `repository`, `digest`, `size`, `media.type`, `reference`, `needs`, `image`, `platform`, `check` and `layer.count` (all with the `registry.` prefix), and `content_SHA-256`. Do not strip job facts. Delivery may be in any order: manifests wait for their dependencies. The receiver configuration is supplied by your diode operator and is not implemented by this port.
+Your diode receiver must deliver every FlowFile to `FromDiode` with its **exact bytes and attributes**, including `registry.kind`, `repository`, `digest`, `size`, `media.type`, `reference`, `needs`, `owners`, `image`, `platform`, `check` and `layer.count` (all with the `registry.` prefix), and `content_SHA-256`. Do not strip job facts. Delivery may be in any order: manifests wait for their dependencies. The receiver configuration is supplied by your diode operator and is not implemented by this port.
 
 For a **same-instance test only**, the low `ToDiode` port is connected to this `FromDiode` port on the parent `ImageTransfer` canvas by a connection named `DiodeStandIn` with Back Pressure Object Threshold `20` and Size Threshold `20 GB` and no relationship. This is a test stand-in, **not a physical data diode**. The registry URL, user and password on this side come from the high parameter context; no source credential is ever copied here.
 
 ### H9. Start and verify the high side
 
-Start the high side **first**: `FromDiode` and every high card, keeping `LogMessage (failure)` and `LogMessage (stale)` **disabled**. Check that every active processor validates on every node. Then start the low side. After a small request has gone through, check:
+Start the high side **first**: `FromDiode` and every high card, keeping `LogMessage (failure)` and `LogMessage (incomplete)` **disabled**. Check that every active processor validates on every node. Then start the low side. After a small request has gone through, check:
 
 | Signal | Expected result |
 |---|---|
-| High RouteRegistryTransfer | Waiting-layer messages may appear until dependencies arrive; retries are penalized |
+| Queue in front of Wait | Manifests wait here until their layers arrive, then leave within one Wait run; `registry.wait.missing` says what each still needs |
 | Destination tag | Present with the exact original manifest digest for the selected platform or platforms |
 | Destination blobs | Every config and layer digest exists with its planned size |
-| Queues into LogMessage (failure) and LogMessage (stale) | Empty after success; any retained FlowFile has `registry.error` |
+| Queues into LogMessage (failure) and LogMessage (incomplete) | Empty after success; any retained FlowFile has `registry.error` |
 | Work queues | Drain to zero |
 
 The live tests passed BusyBox 1.36.1 and a synthetic image with a 1,048,895,048-byte layer after the persisted extension deployment. The larger OCI manifest was `sha256:e772bf3d7e6cf1c10519f432e8ca25c4e4cdf5e830e3df198e575521543d75a7`; the destination manifest bytes and all blob sizes matched, with empty queues. The 9 GiB source seed failed at the low Quay before NiFi received a webhook, so it is **not** a validated 9 GiB transfer. Your work diode integration still needs its own end-to-end test.
 
-### H10. Recover a held, stale or incomplete transfer
+### H10. Recover a held or incomplete transfer
 
-Keep failed bytes in place while you read the bulletin and `registry.error`. Do not start LogMessage (failure) or LogMessage (stale), empty their queues, or auto-terminate an extra error relationship to make the canvas green.
+Keep failed bytes in place while you read the bulletin and `registry.error`. Do not start LogMessage (failure) or LogMessage (incomplete), empty their queues, or auto-terminate an extra error relationship to make the canvas green.
 
 | Symptom | Check or action |
 |---|---|
 | High side stops moving; a queue into LogMessage (failure) shows 20 queued | Back pressure: each LogMessage (failure) queue stops its source at 20 FlowFiles, and a stopped RouteRegistryTransfer stops the whole high side, including new arrivals from the diode. Read `registry.error` on the held FlowFiles, fix the cause, then empty or replay the queue. Alert on any FlowFile in a LogMessage (failure) queue so it is seen at 1, not at 20 |
 | Layers go through InvokeHTTP but HEAD on the target repository stays 404 and every manifest waits | Check the upload InvokeHTTP's HTTP URL is `${registry.http.url}`, not the registry address. A fixed URL sends every PUT to the same place, so no blob is stored in the repository the manifest checks |
-| Image never appears; one warning `... incomplete: missing layers N of M ... moved to stale` | Layers were lost across the diode. The manifest is in `LogMessage (stale)`. Ask the low side to resend the image or the named layers, then move the stale manifest back to RouteRegistryTransfer (or let the resent manifest commit). A replayed stale manifest starts a fresh wait |
+| Image never appears; one `ReportIncomplete` warning `... incomplete: missing layers N of M. Check code ... received X of Y, awaiting sha256:...` | Layers were lost across the diode. The manifest is in the LogMessage (incomplete) queue. Ask the low side to resend the whole image by tag: the resent manifest commits once its layers are in. While a manifest still waits (before the bulletin), resending only the named layers is enough |
+| A manifest waits although its layers are in the registry | The signal was lost (cache restart, or a 1.6.0 low side that sends no `registry.owners`). It moves on at its next Wait expiry, when RouteRegistryTransfer checks the registry |
 | Missing layers on high | Read the human image, platform, layer numbers and check code from the bulletin, and give them to the low side to resend |
 | Registry shows upload POSTs but no layer PUTs | InvokeHTTP cannot reach the registry. Causes: no `RegistryTrust` on it (`PKIX path building failed`); a Basic registry without Request Username and Password (HTTP 401); or a Basic registry where InvokeHTTP still has the `Authorization` dynamic property (HTTP 400 from the proxy, logged by ingress-nginx as request `"-"`). The controller logs each retry reason as a warning bulletin |
 | The manifest keeps waiting with `missing layers`, though the registry holds the layers under another repository | A registry keeps blobs per repository, and a `HEAD` for a layer answers `404` unless that repository holds it. RouteRegistryTransfer reads Target Repository for every FlowFile when it handles it, so layers uploaded while it held one value are not found by a manifest checked while it holds another. Keep the Target Repository value (or its parameter) the same from the first layer to the committed tag, then resend the whole image; layers already in the target repository are skipped |
@@ -724,7 +786,11 @@ After everything is wired and verified, you can give the cards descriptive names
 |---|---|
 | RouteRegistryTransfer | `RouteTransfer` |
 | InvokeHTTP | `UploadContent` |
-| RetryFlowFile | `RetryTransfer` |
+| RetryFlowFile (errors) | `RetryTransfer` |
+| Notify | `SignalOwner` |
+| Wait | `WaitForLayers` |
+| RetryFlowFile (wait) | `RetryWait` |
+| LogMessage (report) | `ReportIncomplete` |
 | LogMessage (failure) | `Hold` |
-| LogMessage (stale) | `StaleImages` |
+| LogMessage (incomplete) | `IncompleteImages` |
 | Input Port | `FromDiode` (already named) |

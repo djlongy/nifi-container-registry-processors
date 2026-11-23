@@ -4,15 +4,22 @@ import ssl
 import subprocess
 import tempfile
 import threading
+import types
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-import nifi_stub  # noqa: F401
-from test_push import ssl_service
+import nifi_stub
 
 import container_registry_client as c
 
 DIGEST = "sha256:" + "b" * 64
+
+
+def ssl_service(ders):
+    """An SSLContextProvider whose truststore holds certificates with these DER encodings."""
+    certs = [types.SimpleNamespace(getEncoded=lambda der=der: der) for der in ders]
+    manager = types.SimpleNamespace(getAcceptedIssuers=lambda: certs)
+    return types.SimpleNamespace(createTrustManager=lambda: manager)
 
 
 def make_ca(directory, name, key_usage=True):

@@ -2,7 +2,7 @@
 title: Attribute reference
 type: reference
 status: current
-updated: 2026-10-15
+updated: 2026-10-30
 ---
 
 # Attribute reference
@@ -13,13 +13,13 @@ ListenHTTP turns them into attributes with HTTP Headers for Attributes `X-.*`.
 
 | Header | Used by | Purpose |
 |---|---|---|
-| `X-Artifact-Type` | RouteOnAttribute | `container-images-request` routes the webhook to Export |
-| `X-Sha256` | ExportContainerImages | Must equal the sha256 of the body, or the webhook fails |
-| `X-CI-Project`, `X-CI-Pipeline-Url`, `X-CI-Commit-Sha`, `X-Image-Count`, `X-Registry` | nothing in Export | Routing and display only. Never used to select or check images |
+| `X-Artifact-Type` | a RouteOnAttribute, if you add one | `container-images-request` marks a transfer request. No Python processor reads it |
+| `X-Sha256` | PlanRegistryTransfer | Must equal the sha256 of the body, or the webhook fails |
+| `X-CI-Project`, `X-CI-Pipeline-Url`, `X-CI-Commit-Sha`, `X-Image-Count`, `X-Registry` | nothing | Routing and display only. Never used to select or check images |
 
 ## PlanRegistryTransfer
 
-Read from the incoming FlowFile (it ignores the content when `registry.image.reference` is set; otherwise the content is a webhook body, checked like Export checks it):
+Read from the incoming FlowFile (it ignores the content when `registry.image.reference` is set; otherwise the content is a webhook body, checked against `X-Sha256`, Source Registry URL, Allowed Repositories and the registry's digests):
 
 | Attribute | Direction | Value |
 |---|---|---|
@@ -31,7 +31,7 @@ Read from the incoming FlowFile (it ignores the content when `registry.image.ref
 | `registry.error` | written on failure | Why the request was refused |
 | `planner.job.count` | written | Jobs in the content |
 
-Each job in `$.jobs`: `kind` (`config`, `blob`, `manifest`, `index`), `repository`, `digest`, `size`, `mediaType`, `tag`, `reference`, `layer`, `layers`, `platform`, `check`, `transfer`, `needs`, and for manifests and indexes `body` (base64 of the exact source bytes). The native flow turns them into the attributes `kind`, `repository`, `digest`, `size`, `tag`, `reference`, `layer.n`, `layer.m`, `platform`, `check`, `transfer.id` and `media.type`.
+Each job in `$.jobs`: `kind` (`config`, `blob`, `manifest`, `index`), `repository`, `digest`, `size`, `mediaType`, `tag`, `reference`, `layer`, `layers`, `platform`, `check`, `transfer`, `needs`, `owners` (the digests of the manifests or index that need this job, signalled by the high side once it is stored), and for manifests and indexes `body` (base64 of the exact source bytes). The native flow turns them into the attributes `kind`, `repository`, `digest`, `size`, `tag`, `reference`, `layer.n`, `layer.m`, `platform`, `check`, `transfer.id` and `media.type`.
 
 ## RouteRegistryTransfer
 
@@ -49,42 +49,15 @@ Troubleshoot a stuck or failed FlowFile in this order: `registry.error`, then `r
 | `registry.repository`, `registry.digest`, `registry.size`, `registry.media.type` | read, written on low | The planned object. Content of another size or digest fails |
 | `registry.reference` | read, written on low | The tag (or digest) a manifest is published under |
 | `registry.needs`, `registry.layer.count` | read, written on low | A manifest's blobs or an index's manifests, in order, and the layer count |
+| `registry.owners` | read, written on low | JSON list of the manifest or index digests that need this object. The high side signals each one through `signal` once the object is in the registry |
+| `registry.signal.id`, `registry.signal.next` | written, high | The owner digest Notify signals next (its Release Signal Identifier), and the index of the owner after it |
 | `registry.check` | read, written on low | The check code a resend must quote |
 | `resp.Docker-Content-Digest` | read | The digest the destination reports for a manifest. A different digest fails. A registry that sends no such header is asked for the stored digest instead. The tag PUT URL and its Bearer token are rebuilt from Registry URL and Target Repository, never read from an attribute |
-| `registry.retry.max`, `registry.retries`, `registry.retries.uuid` | written | RetryFlowFile's limit, count and owner. After an error the limit is the current count plus `3`; while a manifest waits it is unlimited and the count stays at `0`. Every successful step, `complete`, `waiting` and `stale` set the count to `0` and blank the owner, so a retry on the low side never fails the high side's Reuse Mode `fail` and a long wait never uses up the retries of a later error |
-| `registry.wait.since`, `registry.wait.checks`, `registry.wait.next` | written, high | A manifest waiting for its layers: when the wait began (epoch seconds), checks so far, and when the next check is due. Cleared when the manifest moves to `stale` |
+| `registry.retry.max`, `registry.retries`, `registry.retries.uuid` | written | RetryTransfer's limit, count and owner for errors. After an error the limit is the current count plus `3`. Every successful step, `complete`, `signal` and `waiting` set the count to `0` and blank the owner, so a retry on the low side never fails the high side's Reuse Mode `fail` and a long wait never uses up the retries of a later error |
+| `registry.wait.received`, `registry.wait.expected` | written, high | A manifest or index at its last check: dependencies already in the registry (X) of all its distinct dependencies (Y). Y counts the config blob of a manifest. WaitForLayers uses Y as Target Signal Count |
+| `registry.wait.missing` | written, high | The dependency digests still awaited, comma separated. Empty once all are in |
+| `registry.manifest.digest` | written, high | The digest the manifest or index is published under: the source digest, unchanged by the transfer |
+| `registry.wait.retries`, `registry.wait.retries.uuid` | read, high | RetryWait's count and owner across one whole wait. Not reset while the manifest waits; blanked when it leaves the wait |
+| `wait.start.timestamp` | written, high | Wait's own, epoch milliseconds. Set to now on every `waiting` so each WaitForLayers visit gets a full Expiration Duration. Never blank: Wait sends a blank value to `failure` |
+| `wait.counter.received` | read | Wait copies the Notify counter onto a released manifest |
 | `content_SHA-256` | read, low | CryptographicHashContent's result, compared with `registry.digest` |
-
-## ExportContainerImages
-
-| Attribute | Direction | Value |
-|---|---|---|
-| `X-Sha256` | read, then replaced | Read from the webhook; on success it is the tar's sha256 |
-| `filename`, `Filename` | written | The tar name (default mode) |
-| `absolute.path` | written | The Tar Output Directory with a trailing `/` |
-| `Content-Type`, `mime.type` | written | `application/octet-stream`, `application/x-tar` (`application/x-ndjson` with Tar Per Image `true`) |
-| `X-Artifact-Type`, `X-Artifact-Format` | written | X-Artifact-Type Value, and `tar` |
-| `registry.host` | written | Host of Source Registry URL |
-| `registry.images` | written | One `repository:tag@digest` per line, in body order |
-| `registry.image.count` | written | Number of images |
-| `registry.image.N.repository`, `.tag`, `.digest` | written | Image N, from 0, in body order |
-| `file.size` | written | Tar size in bytes (default mode) |
-| `registry.tar.count` | written, Tar Per Image `true` | Number of tars (JSON lines in the content) |
-| `registry.error` | written on `failure` | Why the webhook was refused |
-
-Every other incoming attribute stays on the FlowFile. With Tar Per Image `true`, each JSON line in the content holds `filename`, `absolute.path`, `X-Sha256`, `file.size`, `registry.host`, `registry.repository`, `registry.tag`, `registry.digest` and `registry.image.count` with `registry.image.0.*`.
-
-## PullContainerImages
-
-Reads no attributes. Writes the same set as Export's default mode except `registry.image.*`, `registry.tar.count` and `registry.error`, plus one attribute per dynamic property (Expression Language over the attributes above).
-
-## PushContainerImages
-
-| Attribute | Direction | Value |
-|---|---|---|
-| Any attribute named in an Expression Language property | read | Target Registry URL, Input Tar Path and Rewrite Target Base Path evaluate FlowFile attributes, for example `${filename}` |
-| `registry.host` | written | Host of Target Registry URL |
-| `registry.images` | written | One `repository:tag@digest` per image |
-| `registry.pushed`, `registry.present` | written | Tags pushed, and tags already at their digest |
-| `registry.tar.leftover` | written | The path of a tar that was pushed but could not be deleted |
-| `registry.error` | written on `failure` | Why the push failed |

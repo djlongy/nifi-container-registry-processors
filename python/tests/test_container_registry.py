@@ -1,6 +1,5 @@
 """Checks that run without NiFi: python3 -m unittest discover -s python/tests"""
 import ast
-import io
 import os
 import subprocess
 import sys
@@ -8,24 +7,6 @@ import unittest
 
 HERE = os.path.join(os.path.dirname(__file__), "..", "container-registry")
 sys.path.insert(0, HERE)
-from container_registry_client import RegistryError, _Hashing, rebase  # noqa: E402
-
-
-class Client(unittest.TestCase):
-    def test_rebase(self):
-        self.assertEqual(rebase("low/team/app", "high"), "high/team/app")
-        self.assertEqual(rebase("low/team/app", strip=True), "team/app")
-        self.assertEqual(rebase("team/app"), "team/app")
-        with self.assertRaises(RegistryError):
-            rebase("low/app", "high", strip=True)
-        with self.assertRaises(RegistryError):
-            rebase("app", strip=True)
-
-    def test_hashing_read_zero(self):
-        stream = _Hashing(io.BytesIO(b"abc"))
-        self.assertEqual(stream.read(0), b"")
-        self.assertEqual(stream.read(), b"abc")
-        self.assertEqual(stream.count, 3)
 
 
 class Discovery(unittest.TestCase):
@@ -36,23 +17,17 @@ class Discovery(unittest.TestCase):
         return [kw.value.value for n in cls.body if isinstance(n, ast.Assign) and isinstance(n.value, ast.Call)
                 and getattr(n.value.func, "id", None) == "PropertyDescriptor" for kw in n.value.keywords if kw.arg == "name"]
 
-    def test_pull(self):
-        self.assertIn("Tar Output Directory", self.properties("PullContainerImages"))
-        self.assertEqual(len(self.properties("PullContainerImages")), 20)
+    def test_plan(self):
+        self.assertIn("Allowed Repositories", self.properties("PlanRegistryTransfer"))
 
-    def test_export(self):
-        self.assertIn("Allowed Repositories", self.properties("ExportContainerImages"))
-        self.assertEqual(len(self.properties("ExportContainerImages")), 12)
-
-    def test_push(self):
-        self.assertIn("Input Tar Path", self.properties("PushContainerImages"))
-        self.assertEqual(len(self.properties("PushContainerImages")), 11)
+    def test_route(self):
+        self.assertIn("Registry URL", self.properties("RouteRegistryTransfer"))
 
 
 class Isolation(unittest.TestCase):
     """NiFi loads each processor file on its own and never preloads another processor file, so none may import one."""
     def test_no_processor_imports_another(self):
-        names = {"PullContainerImages", "PushContainerImages", "ExportContainerImages"}
+        names = {"PlanRegistryTransfer", "RouteRegistryTransfer"}
         for name in names:
             tree = ast.parse(open(os.path.join(HERE, name + ".py")).read())
             imported = {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
@@ -61,8 +36,9 @@ class Isolation(unittest.TestCase):
 
     def test_each_processor_loads_with_the_others_unimportable(self):
         """NiFi puts a processor's directory on sys.path and loads its file; another processor module is not there."""
-        for name in ("PullContainerImages", "PushContainerImages", "ExportContainerImages"):
-            others = sorted({"PullContainerImages", "PushContainerImages", "ExportContainerImages"} - {name})
+        names = {"PlanRegistryTransfer", "RouteRegistryTransfer"}
+        for name in sorted(names):
+            others = sorted(names - {name})
             code = (
                 "import sys\n"
                 f"sys.path[:0] = [{os.path.dirname(__file__)!r}, {HERE!r}]\n"

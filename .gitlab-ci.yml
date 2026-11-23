@@ -3,9 +3,10 @@ stages: [test, scan]
 
 include:
   - project: 'infra/gitlab-ci-templates'
-    ref: '1.7.1'
+    ref: '1.17.0'
     file: '/templates/quality-sonarqube/template.yml'
     inputs:
+      ca-bundle-variable: ESTATE_CA_BUNDLE
       instance: nifi-registry-processors
       stage: scan
       policy-mode: blocking

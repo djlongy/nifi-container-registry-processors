@@ -39,7 +39,7 @@
       "bundle": {
         "group": "org.apache.nifi",
         "artifact": "python-extensions",
-        "version": "1.5.3"
+        "version": "1.7.0"
       }
     },
     {
@@ -70,13 +70,13 @@
       },
       "auto_terminated": [
         "original",
-        "stale",
+        "signal",
         "waiting"
       ],
       "bundle": {
         "group": "org.apache.nifi",
         "artifact": "python-extensions",
-        "version": "1.5.3"
+        "version": "1.7.0"
       }
     },
     {

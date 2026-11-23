@@ -17,8 +17,8 @@ The repository started with Java processors packaged as a NAR. The same processo
 
 | Option | Pros | Cons |
 |---|---|---|
-| Java NAR | FlowFile content is streamed, so a multi-GB tar can travel as content. Compiled and typed | Needs Java 21 and Maven to build, a build for each NiFi version, and a release step. Harder to read and change on a locked-down work machine |
-| Python processors | Plain source, no build, no dependencies. A person or a local LLM can read, change and test the code with `python3 -m unittest`. Reload with a processor restart | The Python API holds FlowFile content in memory, so the tar is written to disk and passed by path. Needs Python 3.10+ enabled on every node |
+| Java NAR | FlowFile content is streamed, so a multi-GB layer can travel as content. Compiled and typed | Needs Java 21 and Maven to build, a build for each NiFi version, and a release step. Harder to read and change on a locked-down work machine |
+| Python processors | Plain source, no build, no dependencies. A person or a local LLM can read, change and test the code with `python3 -m unittest`. Reload with a processor restart | The Python API holds FlowFile content in memory, so image bytes must not pass through a Python processor. Needs Python 3.10+ enabled on every node |
 | Both | Each covers the other's weakness | Two codebases to keep in step, and two sets of property names |
 
 ## Decision
@@ -27,6 +27,6 @@ Python only. The reasons given by the maintainer: transparency, and that a local
 
 ## Consequences
 
-- The tar lives on disk, not in FlowFile content. See [ADR 0002](adr-0002-tar-storage.md).
+- Python processors never hold image bytes. They plan and route, and native InvokeHTTP moves each blob and manifest as FlowFile content. See [ADR 0007](adr-0007-compact-native-layer-transfer.md).
 - The Python processors are the maintained implementation. The README describes only them.
-- Versions follow the Python processors: 1.5.0 is the first release that ships them with the renamed properties.
+- Versions follow the Python processors: 1.5.0 is the first release that ships them with the renamed properties. 1.6.0 removes the tar processors ([ADR 0008](adr-0008-remove-tar-processors.md)).

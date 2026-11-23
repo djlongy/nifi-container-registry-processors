@@ -50,7 +50,7 @@ class Plan:
         return {"kind": kind, "repository": self.repository, "digest": digest, "size": size, "mediaType": media_type,
                 "image": f"{self.repository}:{self.tag or self.top}",
                 "tag": "", "reference": digest, "layer": 0, "layers": 0, "platform": platform, "check": self.check,
-                "transfer": self.transfer, "needs": needs, **extra}
+                "transfer": self.transfer, "needs": needs, "owners": [], **extra}
 
     def wanted(self, platform):
         return not self.selection or any(platform == s or platform.startswith(s + "/") for s in self.selection)
@@ -64,6 +64,12 @@ class Plan:
         else:
             self._walk_image(digest, raw, document, media_type, body, platform)
 
+    @staticmethod
+    def own(job, owner):
+        """The high side signals each owner, a manifest or index that needs this job, once the job is stored."""
+        if owner not in job["owners"]:
+            job["owners"].append(owner)
+
     def _walk_index(self, digest, raw, document, media_type, body, depth):
         if depth >= self.max_depth:
             raise RegistryError(f"{self.repository}@{self.top}: indexes nested deeper than Maximum Manifest Depth ({self.max_depth})")
@@ -76,16 +82,21 @@ class Plan:
                 self.walk(child["digest"], child_raw, child_type, child_platform, depth + 1)
         if not self.selection:  # a filtered copy cannot keep the index: it names platforms that are not sent
             needs = [c["digest"] for c, p in children]
+            for child in needs:
+                if child in self.manifests:
+                    self.own(self.manifests[child], digest)
             self.manifests[digest] = self.job("index", digest, len(raw), media_type, "-", needs, body=body)
 
     def _walk_image(self, digest, raw, document, media_type, body, platform):
         config, layers = document["config"], document.get("layers") or []
         self.add_blob("config", config["digest"], config["size"], config["mediaType"], platform, 0, len(layers))
+        self.own(self.blobs[config["digest"]], digest)
         needs = [config["digest"]]
         for n, layer in enumerate(layers, 1):
             if layer.get("urls") and layer.get("mediaType") in FOREIGN_LAYERS:
                 continue  # a foreign layer is served from its urls, never from the registry
             self.add_blob("blob", layer["digest"], layer["size"], layer["mediaType"], platform, n, len(layers))
+            self.own(self.blobs[layer["digest"]], digest)
             needs.append(layer["digest"])
         self.manifests[digest] = self.job("manifest", digest, len(raw), media_type, platform, needs, body=body)
 
@@ -125,7 +136,7 @@ class PlanRegistryTransfer(FlowFileTransform):
         implements = ["org.apache.nifi.python.processor.FlowFileTransform"]
 
     class ProcessorDetails:
-        version = "1.5.3"
+        version = "1.7.0"
         description = ("Plans the transfer of container images: reads the manifests and indexes the FlowFile names from the "
                        "source registry and emits one JSON job list, {\"transfer.id\", \"jobs\"}, with a job per config, "
                        "layer, manifest and index. It never reads a blob. Split $.jobs with SplitJson and let native "

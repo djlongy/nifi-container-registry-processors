@@ -1,6 +1,6 @@
 # Image transfer live recovery proof
 
-On 2026-10-15 (Sydney; 2026-10-14 UTC), the production NiFi 2.12.0 flow with PlanRegistryTransfer/RouteRegistryTransfer 1.5.1 recovered a missing layer using both a selective replay and an image/tag-only replay. No processor source code changed. [The by-hand guide](image-transfer-build-by-hand.md#9-recover-a-held-or-incomplete-transfer) documents the operator controls; [the evidence JSON](../reference/image-transfer-recovery-evidence.json) records status, hashes, sizes, timestamps and selected provenance events without credentials or FlowFile attribute dumps.
+On 2026-10-15 (Sydney; 2026-10-14 UTC), the production NiFi 2.12.0 flow with PlanRegistryTransfer/RouteRegistryTransfer 1.5.1 recovered a missing layer using both a selective replay and an image/tag-only replay. No processor source code changed. [The by-hand guide](image-transfer-build-by-hand.md#l11-recover-a-held-or-incomplete-transfer) documents the operator controls; [the evidence JSON](../reference/image-transfer-recovery-evidence.json) records status, hashes, sizes, timestamps and selected provenance events without credentials or FlowFile attribute dumps.
 
 ## Fixture and deletion boundary
 

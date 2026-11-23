@@ -45,6 +45,7 @@ class Registry:
         self.upload = self.base + "/v2/team/app/blobs/uploads/id?_state=opaque"
         self.foreign, self.calls, self.header = False, [], "Bearer scoped-token"
         self.stored = DIGEST
+        self.missing = set()  # digests a HEAD answers 404 for, whatever self.status says
 
     def blob_exists(self, repository, digest):
         self.calls.append((repository, digest))
@@ -56,6 +57,8 @@ class Registry:
 
     def _send(self, repository, actions, method, path, headers=None):
         self.calls.append((repository, actions, method, path))
+        if any(path.endswith("/" + digest) for digest in self.missing):
+            return Response(404)
         return Response(self.status if path else 200)
 
     def _with_auth(self, key, headers):
@@ -193,47 +196,67 @@ class TransferController(unittest.TestCase):
                 self.assertEqual(result.relationship, expected)
                 self.assertIsNone(result.contents)
 
-    def test_missing_dependencies_report_human_fields_and_retry_without_content_reads(self):
-        result = self.run_flow("High", self.facts(kind="manifest", needs=json.dumps([DIGEST, DIGEST])))
+    def test_missing_dependencies_report_human_fields_and_progress_without_content_reads(self):
+        config, layer1, layer2 = ("sha256:" + c * 64 for c in "cde")
+        self.registry.status, self.registry.missing = 200, {layer2}
+        attrs = {**self.facts(kind="manifest", needs=json.dumps([config, layer1, layer2])),
+                 "wait.start.timestamp": "123", "registry.wait.retries": "7", "registry.wait.retries.uuid": "retry-wait"}
+        with patch("RouteRegistryTransfer.time.time", return_value=1000.5):
+            result = self.run_flow("High", attrs)
         self.assertEqual(result.relationship, "waiting")
-        self.assertEqual(result.attributes["registry.retry.max"], "1000000")
-        self.assertEqual(self.processor.logger.lines, [])  # waiting is normal: no warning until stale
-        self.assertIn("team/app:latest (linux/amd64) incomplete: missing layers 1 of 1 and the config blob", result.attributes["registry.error"])
-        self.assertIn("Check code 1234abcd", result.attributes["registry.error"])
+        self.assertEqual(self.processor.logger.lines, [])  # waiting is normal: ReportIncomplete warns at the end
+        self.assertEqual(result.attributes["registry.error"],
+                         "team/app:latest (linux/amd64) incomplete: missing layers 2 of 2. Check code 1234abcd")
+        self.assertEqual({k: result.attributes[k] for k in ("registry.wait.received", "registry.wait.expected",
+                          "registry.wait.missing", "registry.manifest.digest", "wait.start.timestamp")},
+                         {"registry.wait.received": "2", "registry.wait.expected": "3", "registry.wait.missing": layer2,
+                          "registry.manifest.digest": DIGEST, "wait.start.timestamp": "1000500"})  # a fresh Wait start, never blank
+        for kept in ("registry.wait.retries", "registry.wait.retries.uuid"):  # RetryWait's count runs across the wait
+            self.assertNotIn(kept, result.attributes)
 
-    def test_waiting_manifest_checks_on_a_doubling_interval_and_skips_the_registry_until_due(self):
-        manifest = self.facts(kind="manifest", needs=json.dumps([DIGEST, DIGEST]))
-        with patch("RouteRegistryTransfer.time.time", return_value=1000.0):
-            first = self.run_flow("High", manifest)
-        self.assertEqual(float(first.attributes["registry.wait.next"]), 1030.0)
-        waiting = {**manifest, **first.attributes}
-        self.registry.calls.clear()
-        with patch("RouteRegistryTransfer.time.time", return_value=1020.0):
-            early = self.run_flow("High", waiting)
-        self.assertEqual(early.relationship, "waiting")
-        self.assertEqual(self.registry.calls, [])  # not due: no request at all
-        nexts = []
-        for check, now in enumerate([1030.0, 2000.0, 9000.0, 20000.0, 40000.0, 60000.0], start=2):
-            with patch("RouteRegistryTransfer.time.time", return_value=now):
-                result = self.run_flow("High", waiting)
-            waiting = {**waiting, **result.attributes}
-            self.assertEqual(waiting["registry.wait.checks"], str(check))
-            nexts.append(float(waiting["registry.wait.next"]) - now)
-        self.assertEqual(nexts, [60, 120, 240, 480, 960, 1800])  # doubles, capped at 30 min
+    def test_a_layer_named_twice_is_expected_once_as_it_is_signalled_once(self):
+        config, layer = ("sha256:" + c * 64 for c in "cd")
+        self.registry.status, self.registry.missing = 200, {layer}
+        result = self.run_flow("High", self.facts(kind="manifest", needs=json.dumps([config, layer, layer])))
+        self.assertEqual((result.attributes["registry.wait.received"], result.attributes["registry.wait.expected"],
+                          result.attributes["registry.wait.missing"]), ("1", "2", layer))
+        self.assertIn("missing layers 1,2 of 2", result.attributes["registry.error"])
 
-    def test_manifest_goes_stale_after_the_configured_hours_with_one_warning_and_a_fresh_wait_on_replay(self):
-        manifest = {**self.facts(kind="manifest", needs=json.dumps([DIGEST, DIGEST])),
-                    "registry.wait.since": "0", "registry.wait.checks": "40", "registry.wait.next": "0"}
-        with patch("RouteRegistryTransfer.time.time", return_value=2 * 3600.0):
-            result = self.run_flow("High", manifest, **{"Stale After Hours": "2"})
-        self.assertEqual(result.relationship, "stale")
-        self.assertIn("missing layers 1 of 1 and the config blob. Check code 1234abcd", result.attributes["registry.error"])
-        self.assertEqual(result.attributes["registry.wait.since"], "")
-        self.assertEqual(len(self.processor.logger.lines), 1)
-        self.assertIn("moved to stale", self.processor.logger.lines[0][1])
-        with patch("RouteRegistryTransfer.time.time", return_value=2 * 3600.0 - 1):
-            result = self.run_flow("High", manifest, **{"Stale After Hours": "2"})
-        self.assertEqual(result.relationship, "waiting")
+    def test_a_released_manifest_with_all_layers_is_uploaded_and_leaves_the_wait(self):
+        self.registry.status = 200
+        attrs = {**self.facts(kind="manifest"), "registry.wait.retries": "7", "registry.wait.retries.uuid": "retry-wait"}
+        result = self.run_flow("High", attrs)
+        self.assertEqual(result.relationship, "prepared")
+        self.assertEqual(result.attributes["registry.wait.retries"], "")
+        self.assertEqual(result.attributes["registry.wait.retries.uuid"], "")
+        self.assertEqual(result.attributes["registry.wait.missing"], "")
+        self.assertEqual(result.attributes["registry.wait.received"], "1")
+
+    def test_a_stored_object_signals_each_owner_once_then_completes(self):
+        owners = ["sha256:" + c * 64 for c in "12"]
+        self.registry.status = 200
+        attrs = {**self.facts(), "registry.owners": json.dumps(owners)}
+        ids = []
+        result = self.run_flow("High", attrs)  # already in the registry: still signals its owners
+        while result.relationship == "signal":
+            ids.append(result.attributes["registry.signal.id"])
+            attrs = {**attrs, **result.attributes}
+            result = self.run_flow("High", attrs)  # back from Notify, success or failure alike
+        self.assertEqual(ids, owners)
+        self.assertEqual(result.relationship, "complete")
+        self.assertEqual(self.run_flow("High", self.facts()).relationship, "complete")  # a 1.6.0 low side: no owners
+
+    def test_an_uploaded_manifest_signals_its_index(self):
+        index = "sha256:" + "9" * 64
+        attrs = {**self.facts(kind="manifest", reference=DIGEST), "registry.owners": json.dumps([index]),
+                 "registry.stage": "manifest-digest", "invokehttp.status.code": "201", "resp.Docker-Content-Digest": DIGEST}
+        result = self.run_flow("High", attrs)
+        self.assertEqual((result.relationship, result.attributes["registry.signal.id"]), ("signal", index))
+
+    def test_forged_owners_fail_rather_than_signal(self):
+        self.registry.status = 200
+        result = self.run_flow("High", {**self.facts(), "registry.owners": json.dumps(["not-a-digest"])})
+        self.assertEqual(result.relationship, "failure")
 
     def test_manifest_is_committed_by_digest_before_its_tag(self):
         self.registry.status = 200
@@ -305,11 +328,9 @@ class TransferController(unittest.TestCase):
         manifest = self.facts(kind="manifest", needs=json.dumps([DIGEST, DIGEST]))
         attrs = dict(manifest)
         for _ in range(8):
-            with patch("RouteRegistryTransfer.time.time", return_value=0.0):
-                result = self.run_flow("High", attrs)
+            result = self.run_flow("High", attrs)
             self.assertEqual(result.relationship, "waiting")
-            _, attrs = retry_flowfile({**attrs, **result.attributes})
-            attrs["registry.wait.next"] = "0"
+            attrs = {**attrs, **result.attributes}
         self.registry.status = 200  # the layers arrived
         attrs = {**attrs, **self.run_flow("High", attrs).attributes, "registry.stage": "manifest-digest",
                  "invokehttp.status.code": "503"}

@@ -22,9 +22,11 @@ ERROR = 'registry.error'
 RETRY_MAX = 'registry.retry.max'
 RETRIES, RETRIES_UUID = 'registry.retries', 'registry.retries.uuid'  # RetryFlowFile's Retry Attribute and its '.uuid'
 ERROR_RETRIES = 3
-WAIT_SINCE, WAIT_CHECKS, WAIT_NEXT = 'registry.wait.since', 'registry.wait.checks', 'registry.wait.next'
-WAIT_RETRIES = '1000000'  # RetryFlowFile's count never ends a wait; Stale After Hours does
-FIRST_CHECK, LAST_CHECK = 30, 1800  # seconds between dependency checks: doubles from 30 s up to 30 min
+WAIT_RECEIVED, WAIT_EXPECTED, WAIT_MISSING = 'registry.wait.received', 'registry.wait.expected', 'registry.wait.missing'
+WAIT_RETRIES, WAIT_RETRIES_UUID = 'registry.wait.retries', 'registry.wait.retries.uuid'  # RetryWait's own count
+WAIT_START = 'wait.start.timestamp'  # Wait's own, epoch ms. Reset so every visit gets a full Expiration Duration
+MANIFEST_DIGEST = 'registry.manifest.digest'
+OWNERS, SIGNAL_ID, SIGNAL_NEXT = 'registry.owners', 'registry.signal.id', 'registry.signal.next'
 WRITE_SCOPE = 'pull,push'
 BLOB_PRESENT = (200, 302, 307)  # a blob HEAD that redirects to object storage still means the blob exists
 
@@ -35,7 +37,7 @@ class RouteRegistryTransfer(FlowFileTransform):
         implements = ["org.apache.nifi.python.processor.FlowFileTransform"]
 
     class ProcessorDetails:
-        version = "1.5.3"
+        version = "1.7.0"
         description = "Prepare registry jobs and route native downloads/uploads, retries and failures. Never reads blob content."
         tags = ["registry", "container", "streaming", "diode"]
 
@@ -54,11 +56,7 @@ class RouteRegistryTransfer(FlowFileTransform):
     TIMEOUT = PropertyDescriptor(name="Request Timeout", description="Metadata request timeout in seconds; native payload timeouts are separate.",
                                 required=True, default_value="60",
                                 validators=[StandardValidators.POSITIVE_INTEGER_VALIDATOR])
-    STALE = PropertyDescriptor(name="Stale After Hours",
-                               description="High side: how long a manifest may wait for its layers or platform manifests "
-                                           "before it goes to stale with a report of what is missing.",
-                               required=True, default_value="24", validators=[StandardValidators.POSITIVE_INTEGER_VALIDATOR])
-    PROPERTIES = [SIDE, URL, USER, PASSWORD, SSL, REPOSITORY, TIMEOUT, STALE]
+    PROPERTIES = [SIDE, URL, USER, PASSWORD, SSL, REPOSITORY, TIMEOUT]
 
     def __init__(self, **kwargs):
         super().__init__()
@@ -76,10 +74,11 @@ class RouteRegistryTransfer(FlowFileTransform):
                          "High: stored in the registry, auto-terminate"),
             ("retryable", "A transient error (network, authentication, HTTP 408, 429 or 5xx), recoverable. "
                           "Connect to RetryFlowFile and its retry back here; registry.error says why"),
-            ("waiting", "High side: a manifest whose layers or platform manifests have not all arrived. Connect to "
-                        "RetryFlowFile with retry back here; it is checked again at a doubling interval up to 30 min"),
-            ("stale", "High side: a manifest still waiting after Stale After Hours. Connect to a disabled processor "
-                      "to keep it for a resend; low side never uses it, auto-terminate"),
+            ("waiting", "High side: a manifest whose layers or platform manifests have not all arrived, with "
+                        "registry.wait.* saying which. Connect to Wait (signal ${registry.digest}, target "
+                        "${registry.wait.expected}); its success, and RetryFlowFile's retry after expired, back here"),
+            ("signal", "High side: an object now in the registry that a waiting manifest needs. Connect to Notify "
+                       "(signal ${registry.signal.id}); its success and failure back here. Low side: auto-terminate"),
             ("failure", "A permanent condition: refused by the registry, wrong digest or size, or a malformed job. "
                        "Content is kept; connect to a disabled hold processor")]]
 
@@ -93,16 +92,33 @@ class RouteRegistryTransfer(FlowFileTransform):
     # reads "" as a number and fails, so the count restarts at "0", and a blank '.uuid' is ignored.
     FRESH_RETRIES = {RETRIES: "0", RETRIES_UUID: "", RETRY_MAX: ""}
 
+    # A manifest that leaves the wait starts RetryWait's count afresh the next time it waits.
+    LEFT_WAIT = {WAIT_RETRIES: "", WAIT_RETRIES_UUID: ""}
+
     @classmethod
     def _finish(cls, relationship, message=""):
-        return cls._result(relationship, {STAGE: "", AUTH_HEADER: "", ERROR: message, **cls.FRESH_RETRIES})
+        return cls._result(relationship, {STAGE: "", AUTH_HEADER: "", ERROR: message, **cls.FRESH_RETRIES,
+                                          **cls.LEFT_WAIT})
+
+    @classmethod
+    def _complete(cls, flowfile):
+        """High side: the object is in the registry. Signal each manifest that needs it, then complete."""
+        owners = json.loads(flowfile.getAttribute(OWNERS) or "[]")
+        if not isinstance(owners, list) or len(owners) > 1000 or not all(
+                isinstance(o, str) and DIGEST.fullmatch(o) for o in owners):
+            raise ValueError("invalid registry.owners")
+        n = int(flowfile.getAttribute(SIGNAL_NEXT) or 0) if flowfile.getAttribute(STAGE) == "signal" else 0
+        if n >= len(owners):
+            return cls._finish("complete")
+        return cls._result("signal", {STAGE: "signal", AUTH_HEADER: "", ERROR: "", **cls.FRESH_RETRIES,
+                                      SIGNAL_ID: owners[n], SIGNAL_NEXT: str(n + 1)})
 
     @classmethod
     def _retry(cls, flowfile, message):
         """ERROR_RETRIES more tries counted from the count the FlowFile has now. The limit set by the first error
         stays for the rest of the episode, so repeated errors still end in retries_exceeded."""
         limit = flowfile.getAttribute(RETRY_MAX)
-        if limit in (None, "", WAIT_RETRIES) or not limit.isdigit():
+        if not limit or not limit.isdigit():
             count = flowfile.getAttribute(RETRIES) or "0"
             limit = str((int(count) if count.isdigit() else 0) + ERROR_RETRIES)
         return cls._result("retryable", {STAGE: "", AUTH_HEADER: "", ERROR: message, RETRY_MAX: limit})
@@ -134,6 +150,7 @@ class RouteRegistryTransfer(FlowFileTransform):
             "kind": "kind", "repository": "repository", "digest": "digest", "size": "size",
             MEDIA_TYPE: "mediaType", "reference": "reference", "image": "image", "platform": "platform", "check": "check"}.items()}
         attrs["registry.needs"] = json.dumps(job["needs"])
+        attrs[OWNERS] = json.dumps(job.get("owners", []))
         attrs["registry.layer.count"] = str(job.get("layers", 0))
         attrs[STAGE] = ""
         raw = base64.b64decode(job["body"], validate=True) if job["kind"] in ("manifest", "index") else None
@@ -161,7 +178,7 @@ class RouteRegistryTransfer(FlowFileTransform):
         if observed != facts["digest"]:
             return self._finish("failure", "destination manifest digest differs from the planned job")
         if stage != "manifest-digest" or reference == facts["digest"]:
-            return self._finish("complete")
+            return self._complete(flowfile)
         if not TAG.fullmatch(reference or ""):
             raise RegistryError("invalid manifest tag")
         response = client._send(repository, WRITE_SCOPE, "GET", "")  # a scoped token for the tag PUT
@@ -172,6 +189,8 @@ class RouteRegistryTransfer(FlowFileTransform):
             self._header(client, repository, WRITE_SCOPE), facts[MEDIA_TYPE], "manifest-tag"))
 
     def _callback(self, context, side, stage, flowfile, facts):
+        if stage == "signal":
+            return self._complete(flowfile)
         if stage == "verify":
             if flowfile.getSize() != int(facts["size"]) or flowfile.getAttribute("content_SHA-256") != facts["digest"][7:]:
                 return self._finish("failure", "content digest or size differs from the planned job")
@@ -184,7 +203,7 @@ class RouteRegistryTransfer(FlowFileTransform):
             return self._http_failure(flowfile, stage, status)
         if facts["kind"] in ("manifest", "index"):
             return self._manifest_committed(context, flowfile, facts, stage)
-        return self._finish("complete")
+        return self._complete(flowfile)
 
     @staticmethod
     def _dependencies(client, repository, facts):
@@ -206,15 +225,7 @@ class RouteRegistryTransfer(FlowFileTransform):
                 raise RegistryError(f"manifest dependency HEAD failed (HTTP {status})")
         return dependencies, missing
 
-    @staticmethod
-    def _wait_pending(flowfile):
-        """A waiting manifest whose next dependency check is not due: back to RetryFlowFile without a registry call."""
-        due = float(flowfile.getAttribute(WAIT_NEXT) or 0)
-        if time.time() < due:
-            return FlowFileTransformResult("waiting", attributes={**RouteRegistryTransfer.FRESH_RETRIES, RETRY_MAX: WAIT_RETRIES})
-        return None
-
-    def _incomplete(self, flowfile, facts, dependencies, missing, stale_hours):
+    def _incomplete(self, facts, dependencies, missing):
         if facts["kind"] == "index":
             what = "platform manifests " + ",".join(str(n + 1) for n in missing) + f" of {len(dependencies)}"
         else:
@@ -223,25 +234,24 @@ class RouteRegistryTransfer(FlowFileTransform):
             if 0 in missing:
                 what += " and the config blob"
         message = f"{facts['image']} ({facts['platform']}) incomplete: missing {what}. Check code {facts['check']}"
-        now = time.time()
-        since = float(flowfile.getAttribute(WAIT_SINCE) or now)
-        checks = int(flowfile.getAttribute(WAIT_CHECKS) or 0) + 1
-        if now - since >= stale_hours * 3600:
-            self.logger.warn(f"{message}; waited {stale_hours} h, moved to stale")
-            # Cleared so that a stale manifest replayed after a resend starts a fresh wait.
-            return self._result("stale", {STAGE: "", AUTH_HEADER: "", ERROR: message, **self.FRESH_RETRIES,
-                                          WAIT_SINCE: "", WAIT_CHECKS: "", WAIT_NEXT: ""})
-        delay = min(FIRST_CHECK * 2 ** (checks - 1), LAST_CHECK)
-        return self._result("waiting", {STAGE: "", AUTH_HEADER: "", ERROR: message,
-                                      **self.FRESH_RETRIES, RETRY_MAX: WAIT_RETRIES, WAIT_SINCE: str(since),
-                                      WAIT_CHECKS: str(checks), WAIT_NEXT: str(now + delay)})
+        # registry.wait.retries is left alone: it is RetryWait's count across the whole wait.
+        return self._result("waiting", {STAGE: "", AUTH_HEADER: "", ERROR: message, **self.FRESH_RETRIES,
+                                        WAIT_START: str(int(time.time() * 1000)),  # Wait refuses an empty value
+                                        **self._progress(facts, dependencies, missing)})
 
-    def _prepare_blob(self, client, repository, digest):
+    @staticmethod
+    def _progress(facts, dependencies, missing):
+        """Counted by distinct digest: a layer a manifest names twice is one job and one Notify signal."""
+        expected, awaited = list(dict.fromkeys(dependencies)), list(dict.fromkeys(dependencies[n] for n in missing))
+        return {WAIT_RECEIVED: str(len(expected) - len(awaited)), WAIT_EXPECTED: str(len(expected)),
+                WAIT_MISSING: ",".join(awaited), MANIFEST_DIGEST: facts["digest"]}
+
+    def _prepare_blob(self, client, repository, flowfile, digest):
         response = client._send(repository, WRITE_SCOPE, "HEAD", f"{repository}/blobs/{digest}")
         status = response.status
         response.close()
         if status in BLOB_PRESENT:
-            return self._finish("complete")
+            return self._complete(flowfile)
         if status != 404:
             raise RegistryError(f"destination blob HEAD failed (HTTP {status})")
         upload = client.start_upload(repository)
@@ -251,16 +261,16 @@ class RouteRegistryTransfer(FlowFileTransform):
         return self._result("prepared", self._http("PUT", url, self._header(client, repository, WRITE_SCOPE),
                                                "application/octet-stream", "upload"))
 
-    def _prepare_manifest(self, client, repository, facts, flowfile, stale_hours):
+    def _prepare_manifest(self, client, repository, facts):
         dependencies, missing = self._dependencies(client, repository, facts)
         if missing:
-            return self._incomplete(flowfile, facts, dependencies, missing, stale_hours)
+            return self._incomplete(facts, dependencies, missing)
         media_type = facts[MEDIA_TYPE]
         if media_type not in [t.strip() for t in MANIFEST_TYPES.split(",")]:
             raise RegistryError("unsupported manifest media type")
         attrs = self._http("PUT", f"{client.base}/v2/{repository}/manifests/{facts['digest']}",
                            self._header(client, repository, WRITE_SCOPE), media_type, "manifest-digest")
-        return self._result("prepared", attrs)
+        return self._result("prepared", {**attrs, **self.LEFT_WAIT, ERROR: "", **self._progress(facts, dependencies, [])})
 
     def _prop(self, context, descriptor):
         return evaluate(context.getProperty(descriptor), Attributes({})) or ""
@@ -282,7 +292,6 @@ class RouteRegistryTransfer(FlowFileTransform):
         return self._client(context), self._target_repository(context, facts)
 
     def _request(self, context, side, flowfile, facts, attributes):
-        prop = lambda descriptor: self._prop(context, descriptor)
         client = self._client(context)
         repository, digest = facts["repository"], facts["digest"]
         if side == "Low":
@@ -292,10 +301,6 @@ class RouteRegistryTransfer(FlowFileTransform):
             http = self._http("GET", f"{client.base}/v2/{repository}/blobs/{digest}",
                               self._header(client, repository, "pull"), "application/octet-stream", "fetch")
             return self._result("prepared", {**attributes, **http})
-        if facts["kind"] in ("manifest", "index"):
-            pending = self._wait_pending(flowfile)
-            if pending:
-                return pending
         repository = self._target_repository(context, facts)
         if flowfile.getSize() != int(facts["size"]):
             return self._finish("failure", "received content size differs from the planned job")
@@ -303,8 +308,8 @@ class RouteRegistryTransfer(FlowFileTransform):
         client._expect(response, "registry authentication", 200)
         response.close()
         if facts["kind"] in ("blob", "config"):
-            return self._prepare_blob(client, repository, digest)
-        return self._prepare_manifest(client, repository, facts, flowfile, int(prop(self.STALE)))
+            return self._prepare_blob(client, repository, flowfile, digest)
+        return self._prepare_manifest(client, repository, facts)
 
     def transform(self, context, flowfile):
         side = context.getProperty(self.SIDE).getValue()

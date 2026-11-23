@@ -23,9 +23,9 @@ The sender (gitlab-registry-mirror) posts a JSON body and headers. Some headers 
 
 ## Decision
 
-The body selects images. Export accepts it only if it matches `X-Sha256`, names the host of Source Registry URL, lists only Allowed Repositories, and every digest equals what the registry resolves now. The `X-CI-*`, `X-Image-Count` and `X-Registry` headers stay on the FlowFile as attributes for routing and display and are never used to select or check images.
+The body selects images. PlanRegistryTransfer accepts it only if it matches `X-Sha256`, names the host of Source Registry URL, lists only Allowed Repositories, and every digest equals what the registry resolves now. The `X-CI-*`, `X-Image-Count` and `X-Registry` headers stay on the FlowFile as attributes for routing and display and are never used to select or check images.
 
 ## Consequences
 
-- A header that disagrees with the body changes nothing. A test sends `X-Image-Count: 99` and `X-Registry: evil.example` and the export still succeeds with the real count and host.
+- A header that disagrees with the body changes nothing. Plan reads none of these headers, so `X-Image-Count: 99` or `X-Registry: evil.example` cannot change what it plans.
 - `X-Sha256` proves the body is intact, not who sent it. Authenticate the sender on ListenHTTP (a token or TLS client authentication) if that matters.
